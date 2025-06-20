@@ -83,6 +83,7 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://localhost:4173",
         "http://127.0.0.1:4173",
+        # Vercel production domains
         "https://eris-emergency-system.vercel.app",
         "https://eris-emergency-system-4roj91x8e-mayafostters-projects.vercel.app",
         "https://eris-emergency-system-git-main-mayafostters-projects.vercel.app",
