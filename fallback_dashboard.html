@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ERIS - Emergency Response Intelligence System</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
+            color: white;
+            min-height: 100vh;
+            padding: 20px;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05));
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.3);
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #ffffff, #67e8f9);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+            letter-spacing: -0.025em;
+        }
+
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 20px;
+            background: rgba(34, 197, 94, 0.1);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            border-radius: 12px;
+            margin-top: 15px;
+            transition: all 0.3s ease;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            background: #22c55e;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05));
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-radius: 20px;
+            padding: 32px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 20px;
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.05), rgba(6, 182, 212, 0.02));
+            pointer-events: none;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .card h3 {
+            color: #e2e8f0;
+            margin-bottom: 24px;
+            font-size: 1.5rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            letter-spacing: -0.025em;
+        }
+
+        .simulation-form {
+            display: grid;
+            gap: 15px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .form-group label {
+            color: #cbd5e1;
+            font-weight: 500;
+        }
+
+        .form-group select,
+        .form-group input {
+            padding: 12px 16px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(8px);
+            font-family: inherit;
+        }
+
+        .form-group select:focus,
+        .form-group input:focus {
+            border-color: #06b6d4;
+            box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.1);
+            outline: none;
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .form-group select option {
+            background: #334155;
+            color: white;
+        }
+
+        .btn {
+            padding: 15px 32px;
+            border: none;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            margin-top: 15px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            box-shadow: 0 8px 20px rgba(16, 185, 129, 0.25);
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #059669, #047857);
+            transform: translateY(-2px);
+            box-shadow: 0 12px 25px rgba(16, 185, 129, 0.4);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+            box-shadow: 0 8px 20px rgba(239, 68, 68, 0.25);
+        }
+
+        .btn-danger:hover {
+            background: linear-gradient(135deg, #dc2626, #b91c1c);
+            transform: translateY(-2px);
+            box-shadow: 0 12px 25px rgba(239, 68, 68, 0.4);
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .metric-card {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .metric-value {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .metric-label {
+            color: #94a3b8;
+            font-size: 0.9rem;
+        }
+
+        .agents-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 15px;
+        }
+
+        .agent-card {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 16px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .agent-card:hover {
+            border-color: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.4);
+        }
+
+        .agent-card::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 12px;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), transparent);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+        }
+
+        .agent-card:hover::before {
+            opacity: 1;
+        }
+
+        .agent-header {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .agent-name {
+            font-weight: 600;
+            color: #f1f5f9;
+            font-size: 0.875rem;
+        }
+
+        .agent-status {
+            background: #22c55e;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .progress-bar {
+            background: rgba(255, 255, 255, 0.1);
+            height: 6px;
+            border-radius: 3px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #3b82f6, #06b6d4);
+            transition: width 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+        }
+
+        .progress-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            animation: progress-shimmer 2s infinite;
+        }
+
+        @keyframes progress-shimmer {
+            0% {
+                left: -100%;
+            }
+
+            100% {
+                left: 100%;
+            }
+        }
+
+        .log-area {
+            background: #0f172a;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', monospace;
+            font-size: 0.875rem;
+            line-height: 1.5;
+        }
+
+        .log-entry {
+            margin-bottom: 8px;
+            opacity: 0.8;
+        }
+
+        .log-timestamp {
+            color: #64748b;
+        }
+
+        .log-info {
+            color: #60a5fa;
+        }
+
+        .log-success {
+            color: #22c55e;
+        }
+
+        .log-warning {
+            color: #f59e0b;
+        }
+
+        .emergency-banner {
+            background: linear-gradient(45deg, #ef4444, #dc2626);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            text-align: center;
+            display: none;
+        }
+
+        .emergency-banner.active {
+            display: block;
+            animation: alertPulse 1s infinite;
+        }
+
+        @keyframes alertPulse {
+
+            0%,
+            100% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.02);
+            }
+        }
+
+        .full-width {
+            grid-column: 1 / -1;
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+
+            .header h1 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                    <h1>ERIS</h1>
+                    <p style="font-size: 1.2rem; opacity: 0.9;">Emergency Response Intelligence System</p>
+                </div>
+                <div class="status-indicator">
+                    <div class="status-dot"></div>
+                    <span id="connection-status">Connecting to backend...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Emergency Alert Banner -->
+        <div id="emergency-banner" class="emergency-banner">
+            <h2>🚨 ACTIVE SIMULATION: <span id="alert-type">FLOOD</span></h2>
+            <p>Simulation ID: <span id="current-sim-id">N/A</span> | Alert Level: <span id="alert-level">YELLOW</span>
+            </p>
+        </div>
+
+        <!-- Main Grid -->
+        <div class="grid">
+            <!-- Simulation Control -->
+            <div class="card">
+                <h3>Simulation Control</h3>
+                <div class="simulation-form">
+                    <div class="form-group">
+                        <label>Disaster Type</label>
+                        <select id="disaster-type">
+                            <option value="flood">Flood</option>
+                            <option value="earthquake">Earthquake</option>
+                            <option value="hurricane">Hurricane</option>
+                            <option value="wildfire">Wildfire</option>
+                            <option value="tsunami">Tsunami</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Location</label>
+                        <input type="text" id="location" value="Phuket, Thailand" placeholder="Enter location">
+                    </div>
+                    <div class="form-group">
+                        <label>Severity: <span id="severity-display">7</span></label>
+                        <input type="range" id="severity" min="1" max="10" value="7"
+                            oninput="document.getElementById('severity-display').textContent = this.value">
+                    </div>
+                    <div class="form-group">
+                        <label>Duration (hours)</label>
+                        <input type="number" id="duration" min="1" max="24" value="4">
+                    </div>
+                    <button class="btn btn-primary" onclick="startSimulation()">Start Simulation</button>
+                    <button class="btn btn-danger" onclick="stopSimulation()" style="display: none;" id="stop-btn">Stop
+                        Simulation</button>
+                </div>
+            </div>
+
+            <!-- System Status -->
+            <div class="card">
+                <h3>System Status</h3>
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-value" style="color: #22c55e;" id="backend-status">●</div>
+                        <div class="metric-label">Backend</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value" style="color: #3b82f6;" id="agents-count">10</div>
+                        <div class="metric-label">AI Agents</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value" style="color: #f59e0b;" id="active-sims">0</div>
+                        <div class="metric-label">Active Sims</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value" style="color: #8b5cf6;" id="api-version">v0.4.0</div>
+                        <div class="metric-label">Version</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Live Metrics -->
+        <div class="card full-width" style="margin-bottom: 30px;">
+            <h3>Live Metrics</h3>
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-value" style="color: #f59e0b;" id="panic-index">15%</div>
+                    <div class="metric-label">😰 Panic Index</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" style="color: #ef4444;" id="hospital-capacity">85%</div>
+                    <div class="metric-label">🏥 Hospital Capacity</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" style="color: #22c55e;" id="emergency-response">94%</div>
+                    <div class="metric-label">🚑 Emergency Response</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" style="color: #3b82f6;" id="population-affected">12K</div>
+                    <div class="metric-label">👥 Population Affected</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" style="color: #f97316;" id="infrastructure-failures">3</div>
+                    <div class="metric-label">🔧 Infrastructure Failures</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI Agents Status -->
+        <div class="card full-width" style="margin-bottom: 30px;">
+            <h3>AI Agent Network</h3>
+            <div class="agents-list" id="agents-list">
+                <!-- Agents will be populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Activity Log -->
+        <div class="card full-width">
+            <h3>System Activity Log</h3>
+            <div class="log-area" id="activity-log">
+                <div class="log-entry">
+                    <span class="log-timestamp">[10:30:15]</span>
+                    <span class="log-info">INFO</span> - ERIS system initialized successfully
+                </div>
+                <div class="log-entry">
+                    <span class="log-timestamp">[10:30:16]</span>
+                    <span class="log-success">SUCCESS</span> - Google ADK agents loaded (6/6)
+                </div>
+                <div class="log-entry">
+                    <span class="log-timestamp">[10:30:17]</span>
+                    <span class="log-success">SUCCESS</span> - Enhanced agents initialized (4/4)
+                </div>
+                <div class="log-entry">
+                    <span class="log-timestamp">[10:30:18]</span>
+                    <span class="log-info">INFO</span> - Waiting for simulation commands...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const API_BASE = 'http://127.0.0.1:8000';
+        let currentSimulationId = null;
+        let pollInterval = null;
+
+        // Agent definitions
+        const agents = [
+            { name: 'Emergency Response Coordinator', type: 'ADK', status: 'standby', progress: 0, efficiency: 95 },
+            { name: 'Public Health Official', type: 'ADK', status: 'standby', progress: 0, efficiency: 93 },
+            { name: 'Infrastructure Manager', type: 'ADK', status: 'standby', progress: 0, efficiency: 97 },
+            { name: 'Logistics Coordinator', type: 'ADK', status: 'standby', progress: 0, efficiency: 94 },
+            { name: 'Communications Director', type: 'ADK', status: 'standby', progress: 0, efficiency: 92 },
+            { name: 'Recovery Coordinator', type: 'ADK', status: 'standby', progress: 0, efficiency: 96 },
+            { name: 'Hospital Load Coordinator', type: 'Enhanced', status: 'standby', progress: 0, efficiency: 89 },
+            { name: 'Public Behavior Analyst', type: 'Enhanced', status: 'standby', progress: 0, efficiency: 91 },
+            { name: 'Social Media Monitor', type: 'Enhanced', status: 'standby', progress: 0, efficiency: 88 },
+            { name: 'News Simulation Agent', type: 'Enhanced', status: 'standby', progress: 0, efficiency: 90 }
+        ];
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function () {
+            checkBackendConnection();
+            renderAgents();
+            setInterval(checkBackendConnection, 5000);
+        });
+
+        // Backend connection check
+        async function checkBackendConnection() {
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('connection-status').textContent = 'Connected to backend';
+                    document.getElementById('backend-status').textContent = '●';
+                    document.getElementById('backend-status').style.color = '#22c55e';
+
+                    // Get system info
+                    const systemResponse = await fetch(`${API_BASE}/system/info`);
+                    if (systemResponse.ok) {
+                        const systemData = await systemResponse.json();
+                        document.getElementById('api-version').textContent = `v${systemData.eris_version}`;
+                        document.getElementById('agents-count').textContent = systemData.total_agent_types;
+                    }
+                } else {
+                    throw new Error('Backend not responding');
+                }
+            } catch (error) {
+                document.getElementById('connection-status').textContent = 'Backend disconnected';
+                document.getElementById('backend-status').textContent = '●';
+                document.getElementById('backend-status').style.color = '#ef4444';
+                addLogEntry('ERROR', 'Backend connection failed');
+            }
+        }
+
+        // Start simulation
+        async function startSimulation() {
+            const disasterType = document.getElementById('disaster-type').value;
+            const location = document.getElementById('location').value;
+            const severity = parseInt(document.getElementById('severity').value);
+            const duration = parseInt(document.getElementById('duration').value);
+
+            if (!location.trim()) {
+                alert('Please enter a location');
+                return;
+            }
+
+            try {
+                addLogEntry('INFO', `Starting ${disasterType} simulation in ${location}...`);
+
+                const response = await fetch(`${API_BASE}/simulate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        disaster_type: disasterType,
+                        location: location,
+                        severity: severity,
+                        duration: duration
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    currentSimulationId = data.simulation_id;
+
+                    // Update UI
+                    document.getElementById('current-sim-id').textContent = currentSimulationId.substring(0, 8) + '...';
+                    document.getElementById('alert-type').textContent = disasterType.toUpperCase();
+                    document.getElementById('emergency-banner').classList.add('active');
+                    document.querySelector('.btn-primary').style.display = 'none';
+                    document.getElementById('stop-btn').style.display = 'block';
+                    document.getElementById('active-sims').textContent = '1';
+
+                    // Activate agents
+                    agents.forEach(agent => {
+                        agent.status = 'active';
+                        agent.progress = Math.floor(Math.random() * 30) + 10;
+                    });
+                    renderAgents();
+
+                    // Start polling for metrics
+                    startMetricsPolling();
+
+                    addLogEntry('SUCCESS', `Simulation started successfully (ID: ${currentSimulationId.substring(0, 8)})`);
+                    addLogEntry('INFO', `All 10 AI agents activated and coordinating response`);
+                } else {
+                    const errorData = await response.json();
+                    addLogEntry('ERROR', `Failed to start simulation: ${errorData.detail}`);
+                    alert(`Failed to start simulation: ${errorData.detail}`);
+                }
+            } catch (error) {
+                addLogEntry('ERROR', `Network error: ${error.message}`);
+                alert(`Error starting simulation: ${error.message}`);
+            }
+        }
+
+        // Stop simulation
+        function stopSimulation() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+
+            currentSimulationId = null;
+            document.getElementById('emergency-banner').classList.remove('active');
+            document.querySelector('.btn-primary').style.display = 'block';
+            document.getElementById('stop-btn').style.display = 'none';
+            document.getElementById('active-sims').textContent = '0';
+
+            // Reset agents
+            agents.forEach(agent => {
+                agent.status = 'standby';
+                agent.progress = 0;
+            });
+            renderAgents();
+
+            // Reset metrics
+            document.getElementById('panic-index').textContent = '0%';
+            document.getElementById('hospital-capacity').textContent = '65%';
+            document.getElementById('emergency-response').textContent = '100%';
+            document.getElementById('population-affected').textContent = '0';
+            document.getElementById('infrastructure-failures').textContent = '0';
+
+            addLogEntry('INFO', 'Simulation stopped by user');
+        }
+
+        // Start metrics polling
+        function startMetricsPolling() {
+            if (pollInterval) clearInterval(pollInterval);
+
+            pollInterval = setInterval(async () => {
+                if (!currentSimulationId) return;
+
+                try {
+                    const response = await fetch(`${API_BASE}/metrics/dashboard/${currentSimulationId}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        updateMetrics(data.dashboard_data || {});
+                        updateAgentProgress();
+                    }
+                } catch (error) {
+                    console.error('Metrics polling error:', error);
+                }
+            }, 3000);
+        }
+
+        // Update metrics display
+        function updateMetrics(metrics) {
+            document.getElementById('panic-index').textContent = (metrics.panic_index || 0) + '%';
+            document.getElementById('hospital-capacity').textContent = (metrics.hospital_capacity || 65) + '%';
+            document.getElementById('emergency-response').textContent = (metrics.emergency_response || 90) + '%';
+            document.getElementById('population-affected').textContent = Math.floor((metrics.population_affected || 0) / 1000) + 'K';
+            document.getElementById('infrastructure-failures').textContent = metrics.infrastructure_failures || 0;
+            document.getElementById('alert-level').textContent = metrics.alert_level || 'YELLOW';
+
+            // Log key metrics changes
+            if (Math.random() < 0.3) { // Randomly log some updates
+                const events = [
+                    `Hospital capacity at ${metrics.hospital_capacity || 65}%`,
+                    `Panic index updated to ${metrics.panic_index || 0}%`,
+                    `Emergency response efficiency: ${metrics.emergency_response || 90}%`,
+                    `Infrastructure damage assessment: ${metrics.infrastructure_failures || 0} failures`
+                ];
+                addLogEntry('INFO', events[Math.floor(Math.random() * events.length)]);
+            }
+        }
+
+        // Update agent progress
+        function updateAgentProgress() {
+            agents.forEach(agent => {
+                if (agent.status === 'active') {
+                    agent.progress = Math.min(100, agent.progress + Math.random() * 5);
+                    agent.efficiency = Math.max(85, Math.min(100, agent.efficiency + (Math.random() - 0.5) * 2));
+                }
+            });
+            renderAgents();
+        }
+
+        // Render agents
+        function renderAgents() {
+            const agentsList = document.getElementById('agents-list');
+            agentsList.innerHTML = agents.map(agent => `
+                <div class="agent-card">
+                    <div class="agent-header">
+                        <div>
+                            <div class="agent-name">${agent.name}</div>
+                            <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 2px;">
+                                ${agent.type === 'ADK' ? 'Google ADK' : 'Enhanced'} • ${agent.efficiency}% efficiency
+                            </div>
+                        </div>
+                        <div class="agent-status" style="background: ${agent.status === 'active' ? '#22c55e' : '#64748b'}">
+                            ${agent.status}
+                        </div>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${agent.progress}%"></div>
+                    </div>
+                    <div style="text-align: right; font-size: 0.8rem; color: #94a3b8; margin-top: 5px;">
+                        ${Math.round(agent.progress)}% complete
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Add log entry
+        function addLogEntry(level, message) {
+            const logArea = document.getElementById('activity-log');
+            const timestamp = new Date().toLocaleTimeString();
+            const colorClass = {
+                'INFO': 'log-info',
+                'SUCCESS': 'log-success',
+                'WARNING': 'log-warning',
+                'ERROR': 'log-warning'
+            }[level] || 'log-info';
+
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `
+                <span class="log-timestamp">[${timestamp}]</span> 
+                <span class="${colorClass}">${level}</span> - ${message}
+            `;
+
+            logArea.appendChild(entry);
+            logArea.scrollTop = logArea.scrollHeight;
+
+            // Limit log entries
+            while (logArea.children.length > 50) {
+                logArea.removeChild(logArea.firstChild);
+            }
+        }
+    </script>
+</body>
+
+</html>
