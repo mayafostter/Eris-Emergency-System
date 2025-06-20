@@ -18,7 +18,7 @@ Key Features
 - Live Coordination: Real-time cross-agent communication
 
 System Architecture
---
+![Diagram](https://github.com/user-attachments/assets/c7531da7-f00e-4292-ac47-6bd1cc612ef2)
 
 AI Agent System
 
@@ -196,91 +196,6 @@ Agent Management
 System Information
 - GET /system/info - Comprehensive system capabilities
 - GET /ping - Quick connectivity test
-
-Project Structure
-
-eris/                              # Backend Root
-├── main.py                        # Enhanced CLI Interface
-├── api/
-│   └── main.py                    # FastAPI Web Server
-├── agents/                        # AI Agent Implementations
-│   ├── base_agent.py              # Google ADK agent factory
-│   └── enhanced/                  # Specialized agent modules
-├── services/                      # Cloud Service Integrations
-│   ├── firestore_service.py       # Real-time database
-│   ├── bigquery_service.py        # Analytics platform
-│   └── vertex_ai_service.py       # AI generation
-├── orchestrator/                  # Multi-Agent Coordination
-│   ├── orchestrator.py            # Main coordination engine
-│   └── metrics_collector.py       # Performance analytics
-├── utils/                         # Utility Modules
-│   └── time_utils.py              # Simulation time management
-├── config/                        # Configuration Management
-│   └── disaster_configs.py        # Disaster scenario definitions
-└── requirements.txt               # Python dependencies
-
-eris-frontend/                     # Frontend Root
-├── src/
-│   ├── components/                # React UI Components
-│   ├── hooks/                     # Custom React Hooks
-│   ├── services/                  # API Integration
-│   └── utils/                     # Frontend Utilities
-├── public/                        # Static Assets
-├── App.jsx                        # Main Application Component
-├── main.jsx                       # React Entry Point
-├── .env.production                # Production Configuration
-├── package.json                   # Node.js Dependencies
-└── vite.config.js                 # Build Configuration
-
-
-Configuration
-
-Environment Variables
-
-Backend (.env)
-
-Google Cloud Configuration
-GOOGLE_APPLICATION_CREDENTIALS=path/to/credentials.json
-GOOGLE_CLOUD_PROJECT=your-project-id
-
-API Configuration
-ERIS_API_HOST=127.0.0.1
-ERIS_API_PORT=8000
-
-Agent Configuration
-ADK_AGENT_COUNT=6
-ENHANCED_AGENT_COUNT=4
-
-
-Frontend (.env.production)
-
-API Connection
-VITE_API_URL=http://127.0.0.1:8000
-
-Feature Flags
-VITE_ENABLE_WEBSOCKETS=true
-VITE_ENABLE_REAL_TIME_UPDATES=true
-
-
-Testing
-
-Backend Tests
-
-cd eris
-python -m pytest tests/ -v
-
-
-Frontend Tests
-
-cd eris-frontend
-npm run test
-
-
-Integration Tests
-
-Test full system integration
-python tests/integration/test_full_system.py
-
 
 Performance
 
