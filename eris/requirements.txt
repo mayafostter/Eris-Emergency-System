@@ -1,0 +1,43 @@
+# ERIS Requirements - Fixed for Google ADK
+
+# 🚨 FIXED: Google Agent Development Kit (CORRECT package name)
+google-adk>=1.2.1  # ✅ This is the correct package name, not "agent-development-kit"
+
+# Google Cloud SDKs (keeping your existing versions)
+google-cloud-aiplatform>=1.36.0
+google-cloud-firestore>=2.13.0
+google-cloud-bigquery>=3.13.0
+google-cloud-logging>=3.8.0
+google-cloud-storage>=2.10.0
+
+# Core Framework (keeping your existing versions)
+fastapi>=0.104.0
+pydantic>=2.5.0
+uvicorn>=0.24.0
+
+# Async & HTTP (keeping your existing versions)
+aiohttp>=3.9.0
+asyncio-mqtt>=0.11.0
+
+# Configuration & Environment (keeping your existing versions)
+python-dotenv>=1.0.0
+pyyaml>=6.0.1
+
+# CLI & Utilities (keeping your existing versions)
+click>=8.1.0
+rich>=13.7.0
+structlog>=23.2.0
+
+# Data Processing (keeping your existing versions)
+pandas>=2.1.0
+numpy>=1.24.0
+
+# Testing (keeping your existing versions)
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.12.0
+
+# Development (keeping your existing versions)
+black>=23.9.0
+flake8>=6.1.0
+mypy>=1.6.0
