@@ -19,7 +19,7 @@ import {
 
 // API Service
 const apiService = {
-  baseURL: 'http://127.0.0.1:8000',
+  baseURL: import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000',
 
   async getSystemInfo() {
     const response = await fetch(`${this.baseURL}/system/info`);
