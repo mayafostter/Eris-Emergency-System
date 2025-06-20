@@ -38,7 +38,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configuration
-API_BASE_URL = os.getenv('ERIS_API_URL', 'http://127.0.0.1:8000')
+API_BASE_URL = os.getenv('ERIS_API_URL', 'https://eris-backend-621360763676.asia-southeast1.run.app')
 DISASTER_TYPES = ['earthquake', 'hurricane', 'flood', 'wildfire', 'tsunami', 'volcanic_eruption', 'severe_storm']
 
 console = Console()
