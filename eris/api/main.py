@@ -73,7 +73,7 @@ app = FastAPI(
 print(f"✅ DEBUG: App type = {type(app)}")
 print(f"✅ DEBUG: FastAPI app created successfully")
 
-# CRITICAL FIX: Add CORS middleware
+# ONLY CHANGE: FIXED CORS middleware to allow your Vercel domain
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -82,7 +82,10 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:4173",
-        "http://127.0.0.1:4173"
+        "http://127.0.0.1:4173",
+        "https://eris-emergency-system.vercel.app",
+        "https://eris-emergency-system-4roj91x8e-mayafostters-projects.vercel.app",
+        "https://eris-emergency-system-git-main-mayafostters-projects.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
