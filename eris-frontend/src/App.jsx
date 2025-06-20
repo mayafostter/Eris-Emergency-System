@@ -20,7 +20,7 @@ import {
 
 // API Service
 const apiService = {
-  baseURL: import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000',
+  baseURL: 'https://eris-backend-621360763676.asia-southeast1.run.app',
 
   async getSystemInfo() {
     const response = await fetch(`${this.baseURL}/system/info`);
