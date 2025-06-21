@@ -143,7 +143,7 @@ ERIS Orchestrator (Gemini 2.0 Flash)
    - **Disaster Type**: Flood
    - **Location**: Phuket, Thailand
    - **Severity**: 7
-   - **Duration**: 4 hours
+   - **Duration**: 4 hours (PLEASE PUT 24 here)
 3. Click **"Start Simulation"** to launch the 10-agent orchestrator
 
 **Web Dashboard Features:**
