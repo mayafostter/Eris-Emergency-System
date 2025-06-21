@@ -81,37 +81,31 @@ ERIS Orchestrator (Gemini 2.0 Flash)
 
 #### 1. Emergency Response Coordinator
 - **Purpose**: Overall emergency response coordination and first responder management
-- **AI Model**: Gemini 2.0 Flash
 - **Capabilities**: Resource dispatch, emergency prioritization, multi-agency coordination
 - **Key Metrics**: Response time, resource utilization, coordination effectiveness
 
 #### 2. Public Health Manager
 - **Purpose**: Health system coordination and medical response management
-- **AI Model**: Gemini 2.0 Flash
 - **Capabilities**: Medical resource allocation, health advisory generation, disease monitoring
 - **Key Metrics**: Hospital capacity, medical supply levels, health advisory reach
 
 #### 3. Infrastructure Manager
 - **Purpose**: Critical infrastructure assessment and restoration coordination
-- **AI Model**: Gemini 2.0 Flash
 - **Capabilities**: Damage assessment, repair prioritization, utility coordination
 - **Key Metrics**: Infrastructure damage percentage, restoration progress, service availability
 
 #### 4. Logistics Coordinator
 - **Purpose**: Supply chain management and resource distribution
-- **AI Model**: Gemini 2.0 Flash
 - **Capabilities**: Supply tracking, distribution optimization, vendor coordination
 - **Key Metrics**: Supply chain efficiency, distribution coverage, inventory levels
 
 #### 5. Communications Director
 - **Purpose**: Public information management and media coordination
-- **AI Model**: Gemini 2.0 Flash
 - **Capabilities**: Public messaging, media relations, communication strategy
 - **Key Metrics**: Message reach, public trust levels, communication effectiveness
 
 #### 6. Recovery Coordinator
 - **Purpose**: Long-term recovery planning and community rebuilding
-- **AI Model**: Gemini 2.0 Flash
 - **Capabilities**: Recovery planning, community engagement, economic restoration
 - **Key Metrics**: Recovery progress, community resilience, economic indicators
 
