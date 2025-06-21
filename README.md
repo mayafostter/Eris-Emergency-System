@@ -7,19 +7,6 @@ Overview
 
 ERIS is a sophisticated emergency response intelligence system that leverages 10 specialized AI agents to simulate, coordinate, and optimize disaster response scenarios. Built for emergency preparedness testing, training, and strategic planning.
 
-Live Demo: https://eris-emergency-system.vercel.app/
-API Status: https://eris-backend-621360763676.us-central1.run.app/health
-
-Key Features
-
-- 10 AI Agents: 6 Google ADK + 4 Enhanced specialized agents
-- Real-time Dashboard: Live metrics with WebSocket streaming
-- Multi-Disaster Support: 7+ disaster types with realistic simulations
-- Phase-based Execution: Impact → Response → Recovery phases
-- Cloud Integration: Firestore, BigQuery, and Vertex AI
-- Dual Interface: Professional CLI + Modern Web Dashboard
-- Live Coordination: Real-time cross-agent communication
-
 ## Live System Access
 
 | Component | URL | Status |
