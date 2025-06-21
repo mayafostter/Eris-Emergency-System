@@ -1,7 +1,7 @@
 ERIS (Emergency Response Intelligence System)
 
 AI-Powered Disaster Simulation & Coordination Platform  
-10-Agent Orchestrator with Gemini 2.0 Flash
+Agent Orchestrator with Gemini 2.0 Flash
 
 Overview
 
