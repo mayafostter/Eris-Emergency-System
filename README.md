@@ -15,7 +15,6 @@ ERIS is a sophisticated emergency response intelligence system that leverages 10
 | **API Backend** | [eris-backend-621360763676.us-central1.run.app](https://eris-backend-621360763676.us-central1.run.app/) | ✅ Active |
 | **API Documentation** | [API Docs](https://eris-backend-621360763676.us-central1.run.app/docs) | ✅ Active |
 | **Fallback Dashboard** | [System Dashboard](https://eris-backend-621360763676.us-central1.run.app/dashboard) | ✅ Active |
-| **Video Demo** | [Youtube]([https://eris-backend-621360763676.us-central1.run.app/docs](https://www.youtube.com/watch?v=Omd812vXja4)) | ✅ Active |
 | **GitHub Repository** | [github.com/mayafostter/Eris-Emergency-System](https://github.com/mayafostter/Eris-Emergency-System) | ✅ Active |
 
 ## AI Orchestrator Architecture
