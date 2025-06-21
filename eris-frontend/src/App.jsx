@@ -20,7 +20,7 @@ import {
 
 // API Service
 const apiService = {
-  baseURL: 'https://eris-backend-621360763676.asia-southeast1.run.app',
+  baseURL: import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000',
 
   async getSystemInfo() {
     const response = await fetch(`${this.baseURL}/system/info`);
@@ -49,8 +49,16 @@ const apiService = {
     return response.json();
   },
 
+  // Use orchestrator endpoint
   async getAllAgents(simulationId) {
     const response = await fetch(`${this.baseURL}/orchestrator/${simulationId}/agents`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+  },
+
+  // Get orchestrator info
+  async getOrchestratorInfo(simulationId) {
+    const response = await fetch(`${this.baseURL}/orchestrator/${simulationId}`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return response.json();
   }
@@ -65,18 +73,18 @@ const DISASTER_TYPES = [
   { type: "tsunami", name: "Tsunami", severity_scale: { min: 1, max: 10, unit: 'Wave Height (m)', default: 8 } }
 ];
 
-// Agent Configuration
+// Agent Configuration with orchestrator info
 const createAgentConfig = () => [
   { id: 'emergency_response_coordinator', name: 'Emergency Response Coordinator', icon: AlertTriangle, color: 'from-red-500 to-orange-500', type: 'adk' },
-  { id: 'public_health_official', name: 'Public Health Official', icon: Heart, color: 'from-pink-500 to-rose-500', type: 'adk' },
+  { id: 'public_health_manager', name: 'Public Health Manager', icon: Heart, color: 'from-pink-500 to-rose-500', type: 'adk' },
   { id: 'infrastructure_manager', name: 'Infrastructure Manager', icon: Settings, color: 'from-yellow-500 to-amber-500', type: 'adk' },
   { id: 'logistics_coordinator', name: 'Logistics Coordinator', icon: BarChart3, color: 'from-green-500 to-emerald-500', type: 'adk' },
   { id: 'communications_director', name: 'Communications Director', icon: Radio, color: 'from-purple-500 to-violet-500', type: 'adk' },
   { id: 'recovery_coordinator', name: 'Recovery Coordinator', icon: TrendingUp, color: 'from-blue-500 to-cyan-500', type: 'adk' },
-  { id: 'hospital_load_coordinator', name: 'Hospital Load Coordinator', icon: Activity, color: 'from-teal-500 to-cyan-500', type: 'enhanced' },
-  { id: 'public_behavior_analyst', name: 'Public Behavior Analyst', icon: MessageCircle, color: 'from-indigo-500 to-blue-500', type: 'enhanced' },
-  { id: 'social_media_monitor', name: 'Social Media Monitor', icon: Zap, color: 'from-orange-500 to-red-500', type: 'enhanced' },
-  { id: 'news_simulation_agent', name: 'News Simulation Agent', icon: Cloud, color: 'from-slate-500 to-gray-500', type: 'enhanced' }
+  { id: 'hospital_load_modeler', name: 'Hospital Load Modeler', icon: Activity, color: 'from-teal-500 to-cyan-500', type: 'enhanced' },
+  { id: 'public_behavior_simulator', name: 'Public Behavior Simulator', icon: MessageCircle, color: 'from-indigo-500 to-blue-500', type: 'enhanced' },
+  { id: 'social_media_dynamics', name: 'Social Media Dynamics', icon: Zap, color: 'from-orange-500 to-red-500', type: 'enhanced' },
+  { id: 'news_coverage_simulator', name: 'News Coverage Simulator', icon: Cloud, color: 'from-slate-500 to-gray-500', type: 'enhanced' }
 ];
 
 export default function ERISDashboard() {
@@ -86,6 +94,7 @@ export default function ERISDashboard() {
   const [error, setError] = useState(null);
   const [systemInfo, setSystemInfo] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [orchestratorInfo, setOrchestratorInfo] = useState(null); // orchestrator state
 
   const [simulationForm, setSimulationForm] = useState({
     disaster_type: 'flood',
@@ -122,14 +131,19 @@ export default function ERISDashboard() {
     testConnection();
   }, []);
 
-  // Real-time polling
+  // Real-time polling with orchestrator data
   useEffect(() => {
     if (!currentSimulationId || !isRunning) return;
 
     const pollInterval = setInterval(async () => {
       try {
         const dashboardData = await apiService.getDashboardMetrics(currentSimulationId);
-        setMetrics(prev => ({ ...prev, ...dashboardData }));
+        setMetrics(prev => ({ ...prev, ...dashboardData.dashboard_data }));
+
+        // Get orchestrator info
+        if (dashboardData.orchestrator_info) {
+          setOrchestratorInfo(dashboardData.orchestrator_info);
+        }
 
         setAgents(prev => prev.map(agent => ({
           ...agent,
@@ -157,6 +171,11 @@ export default function ERISDashboard() {
       setCurrentSimulationId(response.simulation_id);
       setIsRunning(true);
 
+      // Set orchestrator info from response
+      if (response.orchestrator_info) {
+        setOrchestratorInfo(response.orchestrator_info);
+      }
+
       setAgents(prev => prev.map(agent => ({
         ...agent,
         status: 'active',
@@ -172,6 +191,7 @@ export default function ERISDashboard() {
     setIsRunning(false);
     setCurrentSimulationId(null);
     setError(null);
+    setOrchestratorInfo(null); // Reset orchestrator info
     setAgents(createAgentConfig());
   };
 
@@ -221,7 +241,10 @@ export default function ERISDashboard() {
                       </span>
                     )}
                   </div>
-                  <p className="text-gray-400 mt-1">Emergency Response Intelligence System</p>
+                  {/* Header subtitle with orchestrator info */}
+                  <p className="text-gray-400 mt-1">
+                    Emergency Response Intelligence System - {systemInfo?.orchestrator?.ai_model || 'Gemini 2.0 Flash'} Orchestrator
+                  </p>
                 </div>
               </div>
 
@@ -368,8 +391,11 @@ export default function ERISDashboard() {
               <div className="flex items-center justify-between mb-6">
                 <div>
                   <h2 className="text-2xl font-bold">AI Agent Network</h2>
+                  {/* UShow orchestrator info */}
                   <p className="text-cyan-300 mt-1">
-                    {systemInfo ? `${systemInfo.total_agent_types} agents` : 'Loading...'} • 6 Google ADK + 4 Enhanced
+                    {systemInfo ? `${systemInfo.total_agent_types} agents` : 'Loading...'} •
+                    {systemInfo?.agent_system ? ` ${systemInfo.agent_system.adk_agents} ADK + ${systemInfo.agent_system.enhanced_agents} Enhanced` : ' 6 ADK + 4 Enhanced'} •
+                    {orchestratorInfo?.ai_model || systemInfo?.orchestrator?.ai_model || 'Gemini 2.0 Flash'}
                   </p>
                 </div>
                 <div className="px-4 py-2 bg-green-500/10 rounded-lg border border-green-500/30">
@@ -394,8 +420,9 @@ export default function ERISDashboard() {
                           </div>
                           <div>
                             <div className="font-semibold text-white text-sm">{agent.name}</div>
+                            {/* Show orchestrator AI model */}
                             <div className="text-xs text-gray-400">
-                              {agent.type === 'adk' ? '🔷 Google ADK' : '⚡ Enhanced'} • {Math.round(agent.efficiency || 95)}% efficiency
+                              {agent.type === 'adk' ? '🔷 Google ADK' : '⚡ Enhanced'} • {orchestratorInfo?.ai_model || 'Gemini 2.0 Flash'} • {Math.round(agent.efficiency || 95)}% efficiency
                             </div>
                           </div>
                         </div>
@@ -407,7 +434,7 @@ export default function ERISDashboard() {
                         </div>
                       </div>
 
-                      {/* Progress Bar - NEW ADDITION */}
+                      {/* Progress Bar */}
                       <div className="mb-2">
                         <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
                           <span>Progress</span>
@@ -422,7 +449,7 @@ export default function ERISDashboard() {
                         </div>
                       </div>
 
-                      {/* Efficiency Bar - NEW ADDITION */}
+                      {/* Efficiency Bar */}
                       <div>
                         <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
                           <span>Efficiency</span>
@@ -468,6 +495,13 @@ export default function ERISDashboard() {
                   <span className="text-gray-300">Agents Online</span>
                   <span className="text-sm font-medium text-green-400">
                     {agents.filter(a => a.status === 'active').length}/10
+                  </span>
+                </div>
+                {/* Show orchestrator status */}
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-300">Orchestrator</span>
+                  <span className="text-sm font-medium text-cyan-400">
+                    {orchestratorInfo?.coordination_active ? 'Active' : 'Standby'}
                   </span>
                 </div>
                 {systemInfo && (
@@ -523,7 +557,8 @@ export default function ERISDashboard() {
                 {[
                   { user: 'EmergencyPhuket', time: '2 min ago', message: `Hospital overflow detected. ICU at ${Math.round(metrics.hospital_capacity)}% capacity.`, type: 'urgent' },
                   { user: 'PublicHealthTH', time: '5 min ago', message: `Public panic index at ${Math.round(metrics.panic_index)}%. Coordinating crowd management.`, type: 'warning' },
-                  { user: 'ERISSystem', time: '1 min ago', message: `All ${agents.filter(a => a.status === 'active').length} AI agents operational. Emergency response at ${Math.round(metrics.emergency_response)}%.`, type: 'info' }
+                  /* UPDATED: Emergency feed message */
+                  { user: 'ERISSystem', time: '1 min ago', message: `${orchestratorInfo?.ai_model || 'Gemini 2.0 Flash'} orchestrator deployed - All ${agents.filter(a => a.status === 'active').length} AI agents coordinating response at ${Math.round(metrics.emergency_response)}%.`, type: 'info' }
                 ].map((post, index) => (
                   <div key={index} className={`p-3 rounded-lg border-l-4 ${post.type === 'urgent' ? 'border-red-500 bg-red-500/10' :
                     post.type === 'warning' ? 'border-yellow-500 bg-yellow-500/10' :
@@ -549,6 +584,9 @@ export default function ERISDashboard() {
           <div>Connected: {isConnected ? '✅' : '❌'}</div>
           <div>Running: {isRunning ? '🟢' : '⭕'}</div>
           <div>Agents: {agents.filter(a => a.status === 'active').length}/10</div>
+          {/* Show orchestrator info in debug */}
+          <div>AI Model: {orchestratorInfo?.ai_model || systemInfo?.orchestrator?.ai_model || 'Gemini 2.0 Flash'}</div>
+          <div>Version: v{systemInfo?.eris_version || '0.5.0'}</div>
           {currentSimulationId && (
             <div>ID: {currentSimulationId.slice(0, 8)}...</div>
           )}
