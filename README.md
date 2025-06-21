@@ -1,11 +1,15 @@
 ERIS (Emergency Response Intelligence System)
 
-AI-Powered Disaster Simulation Platform with Multi-Agent Coordination
+AI-Powered Disaster Simulation & Coordination Platform  
+10-Agent Orchestrator with Gemini 2.0 Flash
 
 Overview
 
-ERIS is a sophisticated emergency response intelligence system that leverages 10 specialized AI agents to simulate, coordinate, and optimize disaster response scenarios.
-Built for emergency preparedness testing, training, and strategic planning.
+ERIS is a sophisticated emergency response intelligence system that leverages 10 specialized AI agents to simulate, coordinate, and optimize disaster response scenarios. Built for emergency preparedness testing, training, and strategic planning.
+
+Live Demo:https://eris-emergency-system.vercel.app/
+API Status: https://eris-backend-621360763676.us-central1.run.app/health
+AI Model: https://cloud.google.com/vertex-ai
 
 Key Features
 
@@ -17,215 +21,472 @@ Key Features
 - Dual Interface: Professional CLI + Modern Web Dashboard
 - Live Coordination: Real-time cross-agent communication
 
-System Architecture
-![Diagram](https://github.com/user-attachments/assets/c7531da7-f00e-4292-ac47-6bd1cc612ef2)
+## Live System Access
 
-AI Agent System
+| Component | URL | Status |
+|-----------|-----|--------|
+| **Main Dashboard** | [eris-emergency-system.vercel.app](https://eris-emergency-system.vercel.app/) | ✅ Active |
+| **API Backend** | [eris-backend-621360763676.us-central1.run.app](https://eris-backend-621360763676.us-central1.run.app/) | ✅ Active |
+| **API Documentation** | [API Docs](https://eris-backend-621360763676.us-central1.run.app/docs) | ✅ Active |
+| **Fallback Dashboard** | [System Dashboard](https://eris-backend-621360763676.us-central1.run.app/dashboard) | ✅ Active |
+| **GitHub Repository** | [github.com/mayafostter/Eris-Emergency-System](https://github.com/mayafostter/Eris-Emergency-System) | ✅ Active |
 
-Google ADK Agents (Core Emergency Response)
+## AI Orchestrator Architecture
 
-| Agent | Role | Capabilities |
-|-------|------|-------------|
-| Emergency Response Coordinator | Central command and control | Resource allocation, priority setting, cross-department coordination |
-| Public Health Official | Health crisis management | Medical resource distribution, health advisories, epidemic tracking |
-| Infrastructure Manager | Critical systems oversight | Power grids, transportation, communications infrastructure |
-| Logistics Coordinator | Supply chain management | Resource routing, inventory management, distribution optimization |
-| Communications Director | Information dissemination | Public messaging, media coordination, emergency broadcasts |
-| Recovery Coordinator | Long-term restoration | Recovery planning, rebuilding coordination, community support |
+**ERIS deploys a sophisticated 10-agent orchestrator powered by Google's Gemini 2.0 Flash** for coordinated emergency response simulation.
 
-Enhanced Specialized Agents
+### Agent Architecture Overview
 
-| Agent | Focus Area | Key Metrics |
-|-------|------------|-------------|
-| Hospital Load Coordinator | Healthcare capacity | ICU utilization, patient flow, medical supply tracking |
-| Public Behavior Analyst | Population response | Evacuation compliance, panic levels, crowd dynamics |
-| Social Media Monitor | Digital sentiment | Misinformation tracking, public sentiment, viral content analysis |
-| News Simulation Agent | Media landscape | Press coverage, public trust, information accuracy |
+```
+ERIS Orchestrator (Gemini 2.0 Flash)
+├── ADK Agents (6) - Google Agent Development Kit
+│   ├── Emergency Response Coordinator
+│   ├── Public Health Manager
+│   ├── Infrastructure Manager
+│   ├── Logistics Coordinator
+│   ├── Communications Director
+│   └── Recovery Coordinator
+└── Enhanced Agents (4) - Specialized AI Modules
+    ├── Hospital Load Modeler
+    ├── Public Behavior Simulator
+    ├── Social Media Dynamics
+    └── News Coverage Simulator
+```
 
-Quick Start
+## Core Capabilities
 
-Prerequisites
+### Multi-Phase Disaster Simulation
+- **Impact Phase**: Initial disaster response and damage assessment
+- **Response Phase**: Coordinated emergency operations and resource deployment
+- **Recovery Phase**: Long-term restoration and lessons learned
 
-- Python 3.9+ with pip
-- Node.js 16+ with npm
-- Git for cloning the repository
+### Cross-Agent Coordination
+- **Context Sharing**: Real-time simulation state synchronization across all 10 agents
+- **Phase-Based Execution**: Orchestrated agent activation based on disaster timeline
+- **Dynamic Resource Allocation**: AI-driven resource optimization across response systems
 
-1. Backend Setup
+### Real-Time Intelligence
+- **Live Metrics Dashboard**: Hospital capacity, panic indices, infrastructure status
+- **WebSocket Streaming**: Real-time updates from all agent systems
+- **Composite Scoring**: AI-calculated emergency response effectiveness
 
-Clone and navigate to backend
-git clone <repository-url>
-cd eris
+## Technology Stack
 
-Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+### AI & Orchestration
+- **Gemini 2.0 Flash**: Core AI model for agent orchestration and decision making
+- **Google ADK**: Agent Development Kit for standardized AI agent creation
+- **Vertex AI**: Advanced AI capabilities for content generation and analysis
 
-Install dependencies
+### Backend Infrastructure
+- **FastAPI**: High-performance async API framework
+- **Google Cloud Run**: Serverless container deployment
+- **Firestore**: Real-time NoSQL database for simulation state
+- **BigQuery**: Analytics and metrics data warehouse
+
+### Frontend & Integration
+- **React + Vite**: Modern frontend framework with fast development
+- **CSS**: Utility-first styling framework
+- **WebSocket**: Real-time bidirectional communication
+- **Vercel**: Edge-optimized frontend deployment
+
+## Detailed Agent Descriptions
+
+### ADK Agents (Google Agent Development Kit)
+
+#### 1. Emergency Response Coordinator
+- **Purpose**: Overall emergency response coordination and first responder management
+- **AI Model**: Gemini 2.0 Flash
+- **Capabilities**: Resource dispatch, emergency prioritization, multi-agency coordination
+- **Key Metrics**: Response time, resource utilization, coordination effectiveness
+
+#### 2. Public Health Manager
+- **Purpose**: Health system coordination and medical response management
+- **AI Model**: Gemini 2.0 Flash
+- **Capabilities**: Medical resource allocation, health advisory generation, disease monitoring
+- **Key Metrics**: Hospital capacity, medical supply levels, health advisory reach
+
+#### 3. Infrastructure Manager
+- **Purpose**: Critical infrastructure assessment and restoration coordination
+- **AI Model**: Gemini 2.0 Flash
+- **Capabilities**: Damage assessment, repair prioritization, utility coordination
+- **Key Metrics**: Infrastructure damage percentage, restoration progress, service availability
+
+#### 4. Logistics Coordinator
+- **Purpose**: Supply chain management and resource distribution
+- **AI Model**: Gemini 2.0 Flash
+- **Capabilities**: Supply tracking, distribution optimization, vendor coordination
+- **Key Metrics**: Supply chain efficiency, distribution coverage, inventory levels
+
+#### 5. Communications Director
+- **Purpose**: Public information management and media coordination
+- **AI Model**: Gemini 2.0 Flash
+- **Capabilities**: Public messaging, media relations, communication strategy
+- **Key Metrics**: Message reach, public trust levels, communication effectiveness
+
+#### 6. Recovery Coordinator
+- **Purpose**: Long-term recovery planning and community rebuilding
+- **AI Model**: Gemini 2.0 Flash
+- **Capabilities**: Recovery planning, community engagement, economic restoration
+- **Key Metrics**: Recovery progress, community resilience, economic indicators
+
+### Enhanced Agents (Specialized AI Modules)
+
+#### 7. Hospital Load Modeler
+- **Purpose**: Real-time hospital capacity and medical resource simulation
+- **AI Model**: Gemini 2.0 Flash + Specialized algorithms
+- **Capabilities**: Patient surge modeling, resource optimization, capacity forecasting
+- **Key Metrics**: Bed occupancy, ICU capacity, medical supply availability, staff utilization
+
+#### 8. Public Behavior Simulator
+- **Purpose**: Population behavior modeling during emergency scenarios
+- **AI Model**: Gemini 2.0 Flash + Behavioral algorithms
+- **Capabilities**: Panic index calculation, evacuation compliance modeling, social dynamics
+- **Key Metrics**: Panic level, evacuation rates, compliance with emergency orders
+
+#### 9. Social Media Dynamics
+- **Purpose**: Social media sentiment and information spread simulation
+- **AI Model**: Gemini 2.0 Flash + NLP processing
+- **Capabilities**: Social sentiment analysis, misinformation tracking, viral content identification
+- **Key Metrics**: Social media activity, sentiment trends, misinformation levels
+
+#### 10. News Coverage Simulator
+- **Purpose**: News media coverage and public information dissemination modeling
+- **AI Model**: Gemini 2.0 Flash + Media analysis
+- **Capabilities**: News story generation, press briefing simulation, media influence tracking
+- **Key Metrics**: Media coverage quality, public trust in official information, news reach
+
+## Quick Start Guide
+
+### Start a Simulation
+
+**Default Demo Scenario: Phuket Flood Emergency**
+
+# Using the live API - Phuket Flood Simulation
+curl -X POST "https://eris-backend-621360763676.us-central1.run.app/simulate" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "disaster_type": "flood",
+    "location": "Phuket, Thailand",
+    "severity": 7,
+    "duration": 4
+  }'
+
+**Alternative scenarios:**
+
+# Earthquake scenario
+curl -X POST "https://eris-backend-621360763676.us-central1.run.app/simulate" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "disaster_type": "earthquake",
+    "location": "San Francisco, CA",
+    "severity": 9,
+    "duration": 12
+  }'
+```
+
+### Monitor Real-time Metrics
+
+```javascript
+// Connect to WebSocket for live updates
+const ws = new WebSocket('wss://eris-backend-621360763676.us-central1.run.app/ws/metrics/{simulation_id}');
+
+ws.onmessage = (event) => {
+  const metrics = JSON.parse(event.data);
+  console.log('Real-time metrics:', metrics.dashboard_metrics);
+  console.log('Orchestrator status:', metrics.orchestrator);
+};
+```
+
+### Access Dashboard
+
+**Quick Demo Setup:**
+1. Visit: [https://eris-emergency-system.vercel.app/](https://eris-emergency-system.vercel.app/)
+2. **Default Settings** (pre-configured for demo):
+   - **Disaster Type**: Flood
+   - **Location**: Phuket, Thailand
+   - **Severity**: 7
+   - **Duration**: 4 hours
+3. Click **"Start Simulation"** to launch the 10-agent orchestrator
+
+**Web Dashboard Features:**
+- Real-time agent coordination display
+- Live metrics from all 10 agents
+- Gemini 2.0 Flash orchestrator status
+- Cross-agent context sharing visualization
+
+## System Metrics & Monitoring
+
+### Key Performance Indicators
+
+| Metric | Description | Range | AI Source |
+|--------|-------------|-------|-----------|
+| **Alert Level** | Overall emergency status | GREEN/YELLOW/RED | Orchestrator |
+| **Panic Index** | Population stress level | 0-100 | Public Behavior Agent |
+| **Hospital Capacity** | Medical system utilization | 0-100% | Hospital Load Agent |
+| **Infrastructure Status** | Critical systems functionality | 0-100% | Infrastructure Agent |
+| **Emergency Response** | Response effectiveness score | 0-100 | Emergency Response Agent |
+| **Public Trust** | Trust in official communications | 0-100% | Communications Agent |
+| **Evacuation Compliance** | Population evacuation adherence | 0-100% | Public Behavior Agent |
+
+### Real-time Data Streams
+
+- **Agent Status**: Live status from all 10 agents
+- **Cross-Agent Context**: Shared simulation state
+- **Phase Progression**: Impact → Response → Recovery
+- **Resource Allocation**: Dynamic resource optimization
+- **Public Sentiment**: Social media and news analysis
+
+## Deployment Guide - Prerequisites
+
+# Install required tools
+npm install -g vercel
 pip install -r requirements.txt
 
-Start FastAPI backend
-uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
+# Authenticate with Google Cloud
+gcloud auth login
+gcloud config set project YOUR_PROJECT_ID
+
+### Backend Deployment (Google Cloud Run)
+
+# Set default region to avoid prompts
+gcloud config set run/region us-central1
+
+# Deploy the 10-agent orchestrator
+gcloud run deploy eris-backend \
+  --source . \
+  --platform=managed \
+  --allow-unauthenticated \
+  --memory=2Gi \
+  --cpu=2 \
+  --set-env-vars="ORCHESTRATOR_VERSION=0.5.0,TOTAL_AGENTS=10,AI_MODEL=gemini-2.0-flash"
 
 
-2. Frontend Setup
+### Frontend Deployment (Vercel)
 
-Navigate to frontend (in new terminal)
-cd eris-frontend
+# Deploy React frontend
+cd frontend
+echo "VITE_API_BASE_URL=https://your-backend-url" > .env.production
+vercel --prod
 
-Install dependencies
-npm install
+### Verification
 
-Build and start production server
-npm run build
-npm run preview
+# Test the deployment
+curl https://your-backend-url/health
+curl https://your-backend-url/system/info
+curl https://your-backend-url/agents/health
+
+## API Reference
+
+### Core Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/simulate` | POST | Start new disaster simulation |
+| `/status/{simulation_id}` | GET | Get simulation status |
+| `/metrics/{simulation_id}` | GET | Get agent metrics |
+| `/metrics/dashboard/{simulation_id}` | GET | Get dashboard metrics |
+| `/orchestrator/{simulation_id}` | GET | Get orchestrator status |
+| `/orchestrator/{simulation_id}/agents` | GET | Get all agent info |
+| `/ws/metrics/{simulation_id}` | WebSocket | Real-time metrics stream |
+
+### Agent Management
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/agents/health` | GET | Check all agent systems |
+| `/system/info` | GET | Get system capabilities |
+| `/health` | GET | Overall system health |
+
+### Example API Responses
+
+#### Simulation Status
+```json
+{
+  "simulation_id": "abc123",
+  "status": "active",
+  "current_phase": "response",
+  "orchestrator": {
+    "ai_model": "Gemini 2.0 Flash",
+    "total_agents": 10,
+    "coordination_active": true
+  }
+}
+```
+
+#### Dashboard Metrics
+```json
+{
+  "dashboard_data": {
+    "alert_level": "YELLOW",
+    "panic_index": 35,
+    "hospital_capacity": 78,
+    "infrastructure_failures": 2,
+    "emergency_response": 87,
+    "public_trust": 82
+  },
+  "orchestrator_info": {
+    "ai_model": "Gemini 2.0 Flash",
+    "current_phase": "response",
+    "total_agents": 10
+  }
+}
+```
+
+## Advanced Features
+
+### AI Orchestration Engine
+
+The ERIS orchestrator uses **Gemini 2.0 Flash** as the core intelligence for:
+
+- **Dynamic Agent Coordination**: Real-time decision making for agent activation and resource allocation
+- **Context-Aware Processing**: Understanding disaster scenarios and adapting agent behavior
+- **Cross-Agent Communication**: Facilitating intelligent information sharing between specialized agents
+- **Predictive Analysis**: Forecasting disaster impacts and response effectiveness
+
+### Cross-Agent Context Sharing
+
+```python
+# Example context shared across all agents
+simulation_context = {
+    'disaster_type': 'earthquake',
+    'severity': 7,
+    'infrastructure_damage': 45,
+    'hospital_capacity_utilization': 85,
+    'panic_index': 0.35,
+    'evacuation_compliance': 0.78,
+    'public_trust_level': 0.82,
+    'social_media_activity': 0.9
+}
+```
+
+### Phase-Based Execution
+
+1. **Impact Phase** (0-6 hours)
+   - Initial damage assessment
+   - Emergency response activation
+   - Public safety measures
+
+2. **Response Phase** (6-48 hours)
+   - Coordinated emergency operations
+   - Resource deployment
+   - Public communication
+
+3. **Recovery Phase** (48+ hours)
+   - Infrastructure restoration
+   - Community support
+   - Long-term planning
+
+## Demo Scenarios
+
+### **Primary Demo: Phuket Flood Emergency**
+```bash
+curl -X POST "https://eris-backend-621360763676.us-central1.run.app/simulate" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "disaster_type": "flood",
+    "location": "Phuket, Thailand",
+    "severity": 7,
+    "duration": 4
+  }'
+```
+**Showcases**: Hospital load modeling, evacuation coordination, social media panic tracking, tourism impact assessment
+
+### Tsunami Response
+```bash
+curl -X POST "https://eris-backend-621360763676.us-central1.run.app/simulate" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "disaster_type": "tsunami",
+    "location": "Coastal California",
+    "severity": 8,
+    "duration": 96
+  }'
+```
+
+### Wildfire Emergency
+```bash
+curl -X POST "https://eris-backend-621360763676.us-central1.run.app/simulate" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "disaster_type": "wildfire",
+    "location": "Los Angeles County",
+    "severity": 6,
+    "duration": 120
+  }'
+```
+
+## Project Structure
+
+```
+eris/                              # Backend Root
+├── api/
+│   └── main.py                    # FastAPI Server (v0.5.0)
+├── orchestrator/
+│   └── orchestrator.py            # 10-Agent Orchestrator
+├── agents/
+│   ├── base_agent.py              # ADK Agent Factory
+│   ├── emergency_response_agent.py
+│   ├── public_health_agent.py
+│   ├── infrastructure_manager_agent.py
+│   ├── logistics_coordinator_agent.py
+│   ├── communications_director_agent.py
+│   ├── recovery_coordinator_agent.py
+│   ├── hospital_load_agent.py
+│   ├── public_behavior_agent.py
+│   ├── social_media_agent.py
+│   └── news_simulation_agent.py
+├── services/
+│   ├── firestore_service.py
+│   ├── bigquery_service.py
+│   ├── vertex_ai_service.py
+│   └── metrics_collector.py
+├── utils/
+│   └── time_utils.py
+├── config.py
+├── requirements.txt
+└── fallback_dashboard.html
+
+frontend/                          # React Frontend
+├── src/
+│   ├── App.jsx                    # Main Dashboard
+│   └── components/
+├── .env.production
+└── package.json
+```
+
+## 🏆 Innovation Highlights
+
+1. **10-Agent AI Orchestrator**: Unprecedented coordination of specialized AI agents
+2. **Gemini 2.0 Flash Integration**: Cutting-edge AI model for emergency response
+3. **Real-time Cross-Agent Context**: Dynamic information sharing across all agents
+4. **Hospital Load Modeling**: Specialized healthcare system simulation
+5. **Social Media Dynamics**: AI-powered social sentiment and misinformation tracking
+6. **Phase-Based Execution**: Realistic disaster timeline progression
 
 
-3. CLI Usage
+### Troubleshooting - Common Issues
 
-In backend directory with venv activated
-cd eris
+1. **CORS Errors**: Ensure frontend URL is in backend CORS configuration
+2. **Agent Timeout**: Increase Cloud Run timeout for complex simulations
+3. **Memory Issues**: Scale up Cloud Run memory allocation for large simulations
+4. **Region Selection**: Always use the same region (us-central1) to maintain consistent URLs
 
-View system status
-python main.py status
+#### Performance Optimization
 
-List available disasters
-python main.py disasters
-
-Start simulation with monitoring
-python main.py simulate --type flood --location "Phuket, Thailand" --severity 7 --duration 4 --monitor 30
-
-Monitor existing simulation
-python main.py monitor <simulation_id> --duration 60
+- **Concurrent Agents**: All 10 agents run concurrently for optimal performance
+- **Context Caching**: Simulation context is cached for faster agent access
+- **WebSocket Optimization**: Real-time updates use efficient WebSocket connections
 
 
-Access Points
+## Acknowledgments
 
-Once running, access ERIS through:
+- **Google Cloud**: For Gemini 2.0 Flash and cloud infrastructure
+- **Google ADK**: For agent development framework
+- **Vercel**: For frontend deployment platform
+- **FastAPI**: For high-performance API framework
+- **React Community**: For modern frontend development tools
 
-Web Dashboard: http://localhost:4173
-API Documentation: http://127.0.0.1:8000/docs
-CLI Interface: python main.py --help
+---
 
-Demo Scenarios
-
-Scenario 1: Coastal Flood Emergency
-
-python main.py simulate --type flood --location "Phuket, Thailand" --severity 8 --duration 6 --monitor 30
-
-Showcases: Hospital overflow, evacuation coordination, social media panic tracking
-
-Scenario 2: Urban Earthquake Response
-
-python main.py simulate --type earthquake --location "San Francisco, CA" --severity 7 --duration 12 --monitor 60
-
-Showcases: Infrastructure damage assessment, emergency resource allocation, public communications
-
-Scenario 3: Wildfire Evacuation
-
-python main.py simulate --type wildfire --location "Los Angeles, CA" --severity 6 --duration 8 --monitor 45
-
-Showcases: Mass evacuation logistics, air quality monitoring, news coverage simulation
-
-Key Metrics & Outputs
-
-Real-time Dashboard Metrics
-- Alert Level: GREEN → YELLOW → RED → CRITICAL
-- Panic Index: Public stress and anxiety levels (0-100%)
-- Hospital Capacity: ICU utilization and medical resource strain
-- Population Affected: Number of people impacted by disaster
-- Infrastructure Failures: Critical system outages and damage
-- Emergency Response: Overall response effectiveness (0-100%)
-
-Agent Performance Indicators
-- Efficiency Rating: Individual agent performance (85-100%)
-- Progress Tracking: Task completion across simulation phases
-- Coordination Score: Cross-agent communication effectiveness
-- Resource Utilization: Optimal allocation of emergency resources
-
-Enhanced Analytics
-- Social Media Sentiment: Real-time public mood analysis
-- News Coverage Impact: Media influence on public perception
-- Behavioral Patterns: Population response to emergency directives
-- Recovery Metrics: Long-term restoration progress indicators
-
-Technology Stack
-
-Backend
-- FastAPI: High-performance async web framework
-- Google ADK 1.2.1: Advanced AI agent development kit
-- Pydantic: Data validation and settings management
-- AsyncIO: Concurrent agent coordination
-- WebSockets: Real-time data streaming
-
-Frontend
-- React 18: Modern UI framework with hooks
-- Vite: Lightning-fast build tool and dev server
-- Tailwind CSS: Utility-first styling framework
-- Lucide React: Professional icon library
-- WebSocket Client: Real-time data connection
-
-Cloud & AI
-- Google Cloud Firestore: Real-time database
-- Google BigQuery: Analytics and data warehousing
-- Google Vertex AI: AI content generation
-- Google ADK: Agent orchestration platform
-
-Development
-- Python 3.9+: Backend runtime
-- Node.js 16+: Frontend runtime
-- TypeScript: Type-safe frontend development
-- ESLint: Code quality enforcement
-
-API Endpoints
-
-Core Simulation
-- POST /simulate - Start new disaster simulation
-- GET /status/{simulation_id} - Get simulation status
-- GET /health - System health check
-
-Metrics & Analytics
-- GET /metrics/dashboard/{simulation_id} - Real-time dashboard data
-- GET /extended-metrics/{simulation_id} - Enhanced agent metrics
-- WS /ws/metrics/{simulation_id} - WebSocket metrics stream
-
-Agent Management
-- GET /orchestrator/{simulation_id}/agents - All agent information
-- GET /enhanced-agents/{simulation_id} - Enhanced agent details
-- GET /agents/health - Agent system status
-
-System Information
-- GET /system/info - Comprehensive system capabilities
-- GET /ping - Quick connectivity test
-
-Performance
-
-System Requirements
-- CPU: 4+ cores recommended for optimal agent coordination
-- Memory: 8GB+ RAM for full feature set
-- Network: Broadband connection for cloud services
-- Storage: 2GB+ free space for logs and data
-
-Benchmarks
-- Simulation Startup: <5 seconds
-- Agent Response Time: <500ms average
-- Dashboard Update Frequency: 2-second intervals
-- Concurrent Simulations: Up to 5 recommended
-
-Code Style
-- Python: Follow PEP 8, use type hints
-- JavaScript: Follow ESLint configuration
-- Documentation: Update README for new features
-
-Acknowledgments
-
-- Google Cloud Platform for ADK and cloud services
-- FastAPI team for excellent async framework
-- React community for robust frontend tools
-- Emergency Management Community for domain expertise
-
-Links
-
-- Live Demo: [Demo URL when available]
-- API Documentation: http://127.0.0.1:8000/docs
-- Technical Blog: [Blog URL when available]
-- Presentation Slides: [Slides URL when available]
+ERIS Emergency Response Intelligence System 
+Powered by Gemini 2.0 Flash + Google ADK
