@@ -135,48 +135,6 @@ ERIS Orchestrator (Gemini 2.0 Flash)
 - **Capabilities**: News story generation, press briefing simulation, media influence tracking
 - **Key Metrics**: Media coverage quality, public trust in official information, news reach
 
-## Quick Start Guide
-
-### Start a Simulation
-
-**Default Demo Scenario: Phuket Flood Emergency**
-
-# Using the live API - Phuket Flood Simulation
-curl -X POST "https://eris-backend-621360763676.us-central1.run.app/simulate" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "disaster_type": "flood",
-    "location": "Phuket, Thailand",
-    "severity": 7,
-    "duration": 4
-  }'
-
-**Alternative scenarios:**
-
-# Earthquake scenario
-curl -X POST "https://eris-backend-621360763676.us-central1.run.app/simulate" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "disaster_type": "earthquake",
-    "location": "San Francisco, CA",
-    "severity": 9,
-    "duration": 12
-  }'
-```
-
-### Monitor Real-time Metrics
-
-```javascript
-// Connect to WebSocket for live updates
-const ws = new WebSocket('wss://eris-backend-621360763676.us-central1.run.app/ws/metrics/{simulation_id}');
-
-ws.onmessage = (event) => {
-  const metrics = JSON.parse(event.data);
-  console.log('Real-time metrics:', metrics.dashboard_metrics);
-  console.log('Orchestrator status:', metrics.orchestrator);
-};
-```
-
 ### Access Dashboard
 
 **Quick Demo Setup:**
