@@ -275,44 +275,6 @@ simulation_context = {
    - Community support
    - Long-term planning
 
-## Demo Scenarios
-
-### **Primary Demo: Phuket Flood Emergency**
-```bash
-curl -X POST "https://eris-backend-621360763676.us-central1.run.app/simulate" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "disaster_type": "flood",
-    "location": "Phuket, Thailand",
-    "severity": 7,
-    "duration": 4
-  }'
-```
-**Showcases**: Hospital load modeling, evacuation coordination, social media panic tracking, tourism impact assessment
-
-### Tsunami Response
-```bash
-curl -X POST "https://eris-backend-621360763676.us-central1.run.app/simulate" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "disaster_type": "tsunami",
-    "location": "Coastal California",
-    "severity": 8,
-    "duration": 96
-  }'
-```
-
-### Wildfire Emergency
-```bash
-curl -X POST "https://eris-backend-621360763676.us-central1.run.app/simulate" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "disaster_type": "wildfire",
-    "location": "Los Angeles County",
-    "severity": 6,
-    "duration": 120
-  }'
-```
 
 ## Project Structure
 
@@ -353,7 +315,7 @@ frontend/                          # React Frontend
 └── package.json
 ```
 
-## 🏆 Innovation Highlights
+## Innovation Highlights
 
 1. **10-Agent AI Orchestrator**: Unprecedented coordination of specialized AI agents
 2. **Gemini 2.0 Flash Integration**: Cutting-edge AI model for emergency response
