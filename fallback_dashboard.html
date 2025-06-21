@@ -405,7 +405,8 @@
             <div style="display: flex; align-items: center; justify-content: space-between;">
                 <div>
                     <h1>ERIS</h1>
-                    <p style="font-size: 1.2rem; opacity: 0.9;">Emergency Response Intelligence System</p>
+                    <p style="font-size: 1.2rem; opacity: 0.9;">Emergency Response Intelligence System - Gemini 2.0
+                        Flash Orchestrator</p>
                 </div>
                 <div class="status-indicator">
                     <div class="status-dot"></div>
@@ -473,7 +474,7 @@
                         <div class="metric-label">Active Sims</div>
                     </div>
                     <div class="metric-card">
-                        <div class="metric-value" style="color: #8b5cf6;" id="api-version">v0.4.0</div>
+                        <div class="metric-value" style="color: #8b5cf6;" id="api-version">v0.5.0</div>
                         <div class="metric-label">Version</div>
                     </div>
                 </div>
@@ -521,19 +522,19 @@
             <div class="log-area" id="activity-log">
                 <div class="log-entry">
                     <span class="log-timestamp">[10:30:15]</span>
-                    <span class="log-info">INFO</span> - ERIS system initialized successfully
+                    <span class="log-info">INFO</span> - ERIS v0.5.0 orchestrator initialized successfully
                 </div>
                 <div class="log-entry">
                     <span class="log-timestamp">[10:30:16]</span>
-                    <span class="log-success">SUCCESS</span> - Google ADK agents loaded (6/6)
+                    <span class="log-success">SUCCESS</span> - Gemini 2.0 Flash orchestrator active
                 </div>
                 <div class="log-entry">
                     <span class="log-timestamp">[10:30:17]</span>
-                    <span class="log-success">SUCCESS</span> - Enhanced agents initialized (4/4)
+                    <span class="log-success">SUCCESS</span> - 10-agent coordination system online (6 ADK + 4 Enhanced)
                 </div>
                 <div class="log-entry">
                     <span class="log-timestamp">[10:30:18]</span>
-                    <span class="log-info">INFO</span> - Waiting for simulation commands...
+                    <span class="log-info">INFO</span> - Cross-agent context sharing enabled
                 </div>
             </div>
         </div>
@@ -548,15 +549,15 @@
         // Agent definitions
         const agents = [
             { name: 'Emergency Response Coordinator', type: 'ADK', status: 'standby', progress: 0, efficiency: 95 },
-            { name: 'Public Health Official', type: 'ADK', status: 'standby', progress: 0, efficiency: 93 },
+            { name: 'Public Health Manager', type: 'ADK', status: 'standby', progress: 0, efficiency: 93 },
             { name: 'Infrastructure Manager', type: 'ADK', status: 'standby', progress: 0, efficiency: 97 },
             { name: 'Logistics Coordinator', type: 'ADK', status: 'standby', progress: 0, efficiency: 94 },
             { name: 'Communications Director', type: 'ADK', status: 'standby', progress: 0, efficiency: 92 },
             { name: 'Recovery Coordinator', type: 'ADK', status: 'standby', progress: 0, efficiency: 96 },
-            { name: 'Hospital Load Coordinator', type: 'Enhanced', status: 'standby', progress: 0, efficiency: 89 },
-            { name: 'Public Behavior Analyst', type: 'Enhanced', status: 'standby', progress: 0, efficiency: 91 },
-            { name: 'Social Media Monitor', type: 'Enhanced', status: 'standby', progress: 0, efficiency: 88 },
-            { name: 'News Simulation Agent', type: 'Enhanced', status: 'standby', progress: 0, efficiency: 90 }
+            { name: 'Hospital Load Modeler', type: 'Enhanced', status: 'standby', progress: 0, efficiency: 89 },
+            { name: 'Public Behavior Simulator', type: 'Enhanced', status: 'standby', progress: 0, efficiency: 91 },
+            { name: 'Social Media Dynamics', type: 'Enhanced', status: 'standby', progress: 0, efficiency: 88 },
+            { name: 'News Coverage Simulator', type: 'Enhanced', status: 'standby', progress: 0, efficiency: 90 }
         ];
 
         // Initialize
@@ -643,7 +644,7 @@
                     startMetricsPolling();
 
                     addLogEntry('SUCCESS', `Simulation started successfully (ID: ${currentSimulationId.substring(0, 8)})`);
-                    addLogEntry('INFO', `All 10 AI agents activated and coordinating response`);
+                    addLogEntry('INFO', `Gemini 2.0 Flash orchestrator deployed - All 10 AI agents coordinating response`);
                 } else {
                     const errorData = await response.json();
                     addLogEntry('ERROR', `Failed to start simulation: ${errorData.detail}`);
@@ -746,7 +747,7 @@
                         <div>
                             <div class="agent-name">${agent.name}</div>
                             <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 2px;">
-                                ${agent.type === 'ADK' ? 'Google ADK' : 'Enhanced'} • ${agent.efficiency}% efficiency
+                                ${agent.type === 'ADK' ? 'Google ADK' : 'Enhanced'} • Gemini 2.0 Flash • ${agent.efficiency}% efficiency
                             </div>
                         </div>
                         <div class="agent-status" style="background: ${agent.status === 'active' ? '#22c55e' : '#64748b'}">
