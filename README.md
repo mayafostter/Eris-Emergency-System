@@ -174,45 +174,6 @@ ERIS Orchestrator (Gemini 2.0 Flash)
 - **Resource Allocation**: Dynamic resource optimization
 - **Public Sentiment**: Social media and news analysis
 
-## Deployment Guide - Prerequisites
-
-# Install required tools
-npm install -g vercel
-pip install -r requirements.txt
-
-# Authenticate with Google Cloud
-gcloud auth login
-gcloud config set project YOUR_PROJECT_ID
-
-### Backend Deployment (Google Cloud Run)
-
-# Set default region to avoid prompts
-gcloud config set run/region us-central1
-
-# Deploy the 10-agent orchestrator
-gcloud run deploy eris-backend \
-  --source . \
-  --platform=managed \
-  --allow-unauthenticated \
-  --memory=2Gi \
-  --cpu=2 \
-  --set-env-vars="ORCHESTRATOR_VERSION=0.5.0,TOTAL_AGENTS=10,AI_MODEL=gemini-2.0-flash"
-
-
-### Frontend Deployment (Vercel)
-
-# Deploy React frontend
-cd frontend
-echo "VITE_API_BASE_URL=https://your-backend-url" > .env.production
-vercel --prod
-
-### Verification
-
-# Test the deployment
-curl https://your-backend-url/health
-curl https://your-backend-url/system/info
-curl https://your-backend-url/agents/health
-
 ## API Reference
 
 ### Core Endpoints
