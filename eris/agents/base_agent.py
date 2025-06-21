@@ -1,6 +1,6 @@
 """
 ERIS Base Agent - Factory for creating ERIS agents with Google ADK integration
-FIXED VERSION - Corrects tool signatures and ADK Runner API usage
+UPDATED VERSION - Matches current agent naming and structure
 """
 
 import asyncio
@@ -207,51 +207,50 @@ class ERISAgentFactory:
         return type_instructions.get(agent_type, base_instruction)
 
 
-# ERIS enhanced agent factory functions
-def create_emergency_response_agent() -> LlmAgent:
-    """Create an Emergency Response agent"""
-    return ERISAgentFactory.create_eris_agent(
-        agent_id="emergency_response_coordinator",
-        agent_type="emergency_response",
-        model="gemini-2.0-flash"
-    )
+# UPDATED: Factory functions for current agent implementations
+def create_emergency_response_agent(cloud_services: CloudServices):
+    """Create an Emergency Response agent - Updated import"""
+    from agents.emergency_response_agent import create_emergency_response_agent
+    return create_emergency_response_agent(cloud_services)
 
-def create_public_health_agent() -> LlmAgent:
-    """Create a Public Health agent"""
-    return ERISAgentFactory.create_eris_agent(
-        agent_id="public_health_official",
-        agent_type="public_health",
-        model="gemini-2.0-flash"
-    )
+def create_public_health_agent(cloud_services: CloudServices):
+    """Create a Public Health agent - Updated import"""
+    from agents.public_health_agent import create_public_health_agent
+    return create_public_health_agent(cloud_services)
 
-def create_infrastructure_agent() -> LlmAgent:
-    """Create an Infrastructure agent"""
-    return ERISAgentFactory.create_eris_agent(
-        agent_id="infrastructure_manager",
-        agent_type="infrastructure",
-        model="gemini-2.0-flash"
-    )
+def create_infrastructure_manager_agent(cloud_services: CloudServices):
+    """Create an Infrastructure Manager agent - Updated import"""
+    from agents.infrastructure_manager_agent import create_infrastructure_manager_agent
+    return create_infrastructure_manager_agent(cloud_services)
 
-def create_logistics_agent() -> LlmAgent:
-    """Create a Logistics agent"""
-    return ERISAgentFactory.create_eris_agent(
-        agent_id="logistics_coordinator",
-        agent_type="logistics",
-        model="gemini-2.0-flash"
-    )
+def create_logistics_coordinator_agent(cloud_services: CloudServices):
+    """Create a Logistics Coordinator agent - Updated import"""
+    from agents.logistics_coordinator_agent import create_logistics_coordinator_agent
+    return create_logistics_coordinator_agent(cloud_services)
 
-def create_communications_agent() -> LlmAgent:
-    """Create a Communications agent"""
-    return ERISAgentFactory.create_eris_agent(
-        agent_id="communications_director",
-        agent_type="communications",
-        model="gemini-2.0-flash"
-    )
+def create_communications_director_agent(cloud_services: CloudServices):
+    """Create a Communications Director agent - Updated import"""
+    from agents.communications_director_agent import create_communications_director_agent
+    return create_communications_director_agent(cloud_services)
 
-def create_recovery_agent() -> LlmAgent:
-    """Create a Recovery agent"""
-    return ERISAgentFactory.create_eris_agent(
-        agent_id="recovery_coordinator",
-        agent_type="recovery",
-        model="gemini-2.0-flash"
-    )
+def create_recovery_coordinator_agent(cloud_services: CloudServices):
+    """Create a Recovery Coordinator agent - Updated import"""
+    from agents.recovery_coordinator_agent import create_recovery_coordinator_agent
+    return create_recovery_coordinator_agent(cloud_services)
+
+# Legacy compatibility (for old orchestrator code)
+def create_infrastructure_agent(cloud_services: CloudServices):
+    """Legacy compatibility - redirects to infrastructure_manager_agent"""
+    return create_infrastructure_manager_agent(cloud_services)
+
+def create_logistics_agent(cloud_services: CloudServices):
+    """Legacy compatibility - redirects to logistics_coordinator_agent"""
+    return create_logistics_coordinator_agent(cloud_services)
+
+def create_communications_agent(cloud_services: CloudServices):
+    """Legacy compatibility - redirects to communications_director_agent"""
+    return create_communications_director_agent(cloud_services)
+
+def create_recovery_agent(cloud_services: CloudServices):
+    """Legacy compatibility - redirects to recovery_coordinator_agent"""
+    return create_recovery_coordinator_agent(cloud_services)
