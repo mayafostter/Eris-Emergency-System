@@ -201,7 +201,7 @@ ERIS Orchestrator (Gemini 2.0 Flash)
 #### Simulation Status
 ```json
 {
-  "simulation_id": "abc123",
+  "simulation_id": "2703ddff-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "status": "active",
   "current_phase": "response",
   "orchestrator": {
@@ -261,7 +261,7 @@ simulation_context = {
 ## Project Structure
 
 ```
-eris/                              # Backend Root
+eris/                             
 ├── api/
 │   └── main.py                    # FastAPI Server (v0.5.0)
 ├── orchestrator/
