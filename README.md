@@ -17,6 +17,23 @@ ERIS is a sophisticated emergency response intelligence system that leverages 10
 | **Fallback Dashboard** | [System Dashboard](https://eris-backend-621360763676.us-central1.run.app/dashboard) | ✅ Active |
 | **GitHub Repository** | [github.com/mayafostter/Eris-Emergency-System](https://github.com/mayafostter/Eris-Emergency-System) | ✅ Active |
 
+### Access Dashboard
+
+**Quick Demo Setup:**
+1. Visit: [https://eris-emergency-system.vercel.app/](https://eris-emergency-system.vercel.app/)
+2. **Default Settings** (pre-configured for demo):
+   - **Disaster Type**: Flood
+   - **Location**: Phuket, Thailand
+   - **Severity**: 7
+   - **Duration**: 4 hours (PLEASE PUT 24 here)
+3. Click **"Start Simulation"** to launch the 10-agent orchestrator
+
+**Web Dashboard Features:**
+- Real-time agent coordination display
+- Live metrics from all 10 agents
+- Gemini 2.0 Flash orchestrator status
+- Cross-agent context sharing visualization
+
 ## AI Orchestrator Architecture
 
 **ERIS deploys a sophisticated 10-agent orchestrator powered by Google's Gemini 2.0 Flash** for coordinated emergency response simulation.
@@ -135,23 +152,6 @@ ERIS Orchestrator (Gemini 2.0 Flash)
 - **Capabilities**: News story generation, press briefing simulation, media influence tracking
 - **Key Metrics**: Media coverage quality, public trust in official information, news reach
 
-### Access Dashboard
-
-**Quick Demo Setup:**
-1. Visit: [https://eris-emergency-system.vercel.app/](https://eris-emergency-system.vercel.app/)
-2. **Default Settings** (pre-configured for demo):
-   - **Disaster Type**: Flood
-   - **Location**: Phuket, Thailand
-   - **Severity**: 7
-   - **Duration**: 4 hours (PLEASE PUT 24 here)
-3. Click **"Start Simulation"** to launch the 10-agent orchestrator
-
-**Web Dashboard Features:**
-- Real-time agent coordination display
-- Live metrics from all 10 agents
-- Gemini 2.0 Flash orchestrator status
-- Cross-agent context sharing visualization
-
 ## System Metrics & Monitoring
 
 ### Key Performance Indicators
@@ -258,24 +258,6 @@ simulation_context = {
 }
 ```
 
-### Phase-Based Execution
-
-1. **Impact Phase** (0-6 hours)
-   - Initial damage assessment
-   - Emergency response activation
-   - Public safety measures
-
-2. **Response Phase** (6-48 hours)
-   - Coordinated emergency operations
-   - Resource deployment
-   - Public communication
-
-3. **Recovery Phase** (48+ hours)
-   - Infrastructure restoration
-   - Community support
-   - Long-term planning
-
-
 ## Project Structure
 
 ```
@@ -301,36 +283,21 @@ eris/                              # Backend Root
 │   ├── bigquery_service.py
 │   ├── vertex_ai_service.py
 │   └── metrics_collector.py
-├── utils/
-│   └── time_utils.py
-├── config.py
 ├── requirements.txt
+├── main.py
 └── fallback_dashboard.html
 
-frontend/                          # React Frontend
-├── src/
-│   ├── App.jsx                    # Main Dashboard
-│   └── components/
-├── .env.production
-└── package.json
+frontend/                         
+├── src/                             # React Dashboard
+│   ├── App.jsx
+│   ├── index.css                
+│   └── main.jsx
+├── index.html
+├── package-lock.json
+├── package.json
+└── vite.config.js
 ```
 
-## Innovation Highlights
-
-1. **10-Agent AI Orchestrator**: Unprecedented coordination of specialized AI agents
-2. **Gemini 2.0 Flash Integration**: Cutting-edge AI model for emergency response
-3. **Real-time Cross-Agent Context**: Dynamic information sharing across all agents
-4. **Hospital Load Modeling**: Specialized healthcare system simulation
-5. **Social Media Dynamics**: AI-powered social sentiment and misinformation tracking
-6. **Phase-Based Execution**: Realistic disaster timeline progression
-
-
-### Troubleshooting - Common Issues
-
-1. **CORS Errors**: Ensure frontend URL is in backend CORS configuration
-2. **Agent Timeout**: Increase Cloud Run timeout for complex simulations
-3. **Memory Issues**: Scale up Cloud Run memory allocation for large simulations
-4. **Region Selection**: Always use the same region (us-central1) to maintain consistent URLs
 
 #### Performance Optimization
 
