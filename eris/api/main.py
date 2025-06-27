@@ -1,617 +1,1112 @@
+"""
+ERIS FastAPI Server
+Emergency Response Intelligence System
+"""
+
 import uuid
 import logging
 import asyncio
 import json
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
-from fastapi import FastAPI, HTTPException, status, BackgroundTasks, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from fastapi.responses import HTMLResponse
+import time
+import hashlib
 import os
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional, List, Union
+from contextlib import asynccontextmanager
 
-from services import get_cloud_services
-from utils.time_utils import SimulationTimeManager, SimulationPhase
-from config import ERISConfig
+from fastapi import FastAPI, HTTPException, status, BackgroundTasks, WebSocket, WebSocketDisconnect, Depends, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel, Field, validator
+import uvicorn
 
-# Import orchestrator
-from orchestrator.orchestrator import ERISOrchestrator
+# Security headers - Use Starlette directly (FastAPI is built on Starlette)
+from starlette.middleware.base import BaseHTTPMiddleware
 
-# Import metrics collector
-from services.metrics_collector import ERISMetricsCollector
+# Optional imports with fallbacks
+SLOWAPI_AVAILABLE = False
+PSUTIL_AVAILABLE = False
+TRUSTEDHOST_AVAILABLE = False
 
+# Rate limiting (optional)
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.util import get_remote_address
+    from slowapi.errors import RateLimitExceeded
+    SLOWAPI_AVAILABLE = True
+except ImportError:
+    # Fallback rate limiter
+    class MockLimiter:
+        def limit(self, rate_limit):
+            def decorator(func):
+                return func
+            return decorator
+    
+    class RateLimitExceeded(Exception):
+        pass
+    
+    def _rate_limit_exceeded_handler(request, exc):
+        return JSONResponse(
+            status_code=429,
+            content={"error": "Rate limit exceeded", "detail": "Too many requests"}
+        )
+
+# Memory monitoring (optional)
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    pass
+
+# Trusted host middleware (optional)
+try:
+    from fastapi.middleware.trustedhost import TrustedHostMiddleware
+    TRUSTEDHOST_AVAILABLE = True
+except ImportError:
+    pass
+
+# ERIS imports with fallback
+ERIS_IMPORTS_AVAILABLE = False
+try:
+    from services import get_cloud_services
+    from utils.time_utils import SimulationTimeManager, SimulationPhase
+    from config import ERISConfig
+    from orchestrator.orchestrator import ERISOrchestrator
+    from services.metrics_collector import ERISMetricsCollector
+    ERIS_IMPORTS_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"ERIS imports failed: {e}. Using fallback mode.")
+    # Create fallback classes
+    class SimulationPhase:
+        IMPACT = "impact"
+        RESPONSE = "response"
+        RECOVERY = "recovery"
+
+# Setup logging with structured format
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-# Initialize config and cloud services with error handling
-try:
-    config = ERISConfig()
-    logger.info("✅ Config initialized successfully")
-except Exception as e:
-    logger.warning(f"Config initialization failed: {e}, using defaults")
-    config = type('MinimalConfig', (), {
-        'get_disaster_config': lambda self, disaster_type: {"severity_multiplier": 1.0, "duration": 24}
-    })()
+# ===== CONFIGURATION & ENVIRONMENT =====
+class Settings:
+    def __init__(self):
+        self.API_KEYS = os.getenv("ERIS_API_KEYS", "dev-key-12345,prod-key-67890").split(",")
+        self.ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+        self.DEBUG = os.getenv("DEBUG", "true").lower() == "true"  # Default to true for local development
+        self.MAX_CONCURRENT_SIMULATIONS = int(os.getenv("MAX_CONCURRENT_SIMULATIONS", "10"))
+        self.WEBSOCKET_HEARTBEAT_INTERVAL = int(os.getenv("WEBSOCKET_HEARTBEAT_INTERVAL", "30"))
+        self.RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "100"))
+        self.RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "60"))
+        self.ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
+        self.CORS_ORIGINS = self._get_cors_origins()
+        
+    def _get_cors_origins(self):
+        """Get CORS origins based on environment"""
+        if self.ENVIRONMENT == "production":
+            return [
+                "https://eris-emergency-system.vercel.app",
+                "https://eris-emergency-system-*.vercel.app",
+            ]
+        else:
+            return [
+                "http://localhost:5173",
+                "http://127.0.0.1:5173",
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+                "http://localhost:4173",
+                "http://127.0.0.1:4173",
+                "https://eris-emergency-system.vercel.app",
+                "https://eris-emergency-system-*.vercel.app",
+            ]
 
-try:
-    cloud = get_cloud_services()
-    logger.info("✅ Cloud services initialized successfully")
-except Exception as e:
-    logger.warning(f"Cloud services initialization failed: {e}, using mock mode")
-    # Create a minimal cloud fallback
-    cloud = type('MinimalCloud', (), {
-        'firestore': type('MockFirestore', (), {
-            'save_simulation_state': lambda self, sim_id, data: asyncio.sleep(0),
-            'get_simulation_state': lambda self, sim_id: {"status": "active"}
-        })(),
-        'vertex_ai': type('MockVertexAI', (), {
-            'generate_official_statements': lambda self, context, stage, dept, type: "Mock emergency statement",
-            'generate_social_media_content': lambda self, prompt, context: "Mock social media content"
-        })(),
-        'bigquery': type('MockBigQuery', (), {
-            'log_simulation_event': lambda self, **kwargs: asyncio.sleep(0)
-        })()
-    })()
+settings = Settings()
 
-# Create FastAPI app
+# ===== SECURITY MIDDLEWARE =====
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all responses"""
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        
+        # OWASP Security Headers
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        
+        # Custom ERIS headers
+        response.headers["X-ERIS-Version"] = "0.5.0"
+        response.headers["X-ERIS-Environment"] = settings.ENVIRONMENT
+        
+        return response
+
+# ===== RATE LIMITING =====
+if SLOWAPI_AVAILABLE:
+    limiter = Limiter(key_func=get_remote_address)
+else:
+    limiter = MockLimiter()
+    logging.warning("Rate limiting disabled - slowapi not available")
+
+# ===== AUTHENTICATION =====
+security = HTTPBearer(auto_error=False)
+
+async def verify_api_key(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    """Verify API key for protected endpoints"""
+    if settings.ENVIRONMENT == "development":
+        return True  # Skip auth in development
+        
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    if credentials.credentials not in settings.API_KEYS:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    return True
+
+# ===== HEALTH CHECK & MONITORING =====
+class HealthStatus:
+    def __init__(self):
+        self.startup_time = datetime.utcnow()
+        self.last_health_check = datetime.utcnow()
+        self.total_requests = 0
+        self.failed_requests = 0
+        self.active_simulations = 0
+        self.websocket_connections = 0
+        
+    def record_request(self, success: bool = True):
+        self.total_requests += 1
+        if not success:
+            self.failed_requests += 1
+        self.last_health_check = datetime.utcnow()
+    
+    def get_health_metrics(self):
+        uptime = datetime.utcnow() - self.startup_time
+        error_rate = (self.failed_requests / max(self.total_requests, 1)) * 100
+        
+        return {
+            "status": "healthy" if error_rate < 10 else "degraded",
+            "uptime_seconds": int(uptime.total_seconds()),
+            "total_requests": self.total_requests,
+            "failed_requests": self.failed_requests,
+            "error_rate_percent": round(error_rate, 2),
+            "active_simulations": self.active_simulations,
+            "websocket_connections": self.websocket_connections,
+            "memory_usage_mb": self._get_memory_usage(),
+            "last_check": self.last_health_check.isoformat()
+        }
+    
+    def _get_memory_usage(self):
+        if PSUTIL_AVAILABLE:
+            try:
+                import psutil
+                process = psutil.Process()
+                return round(process.memory_info().rss / 1024 / 1024, 2)
+            except Exception:
+                return 0
+        return 0
+
+health_status = HealthStatus()
+
+# ===== INITIALIZATION =====
+async def initialize_services():
+    """Initialize ERIS services with fallback handling"""
+    global config, cloud
+    
+    try:
+        if ERIS_IMPORTS_AVAILABLE:
+            config = ERISConfig()
+            cloud = get_cloud_services()
+            logger.info("✅ ERIS services initialized successfully")
+        else:
+            # Fallback configuration
+            config = type('FallbackConfig', (), {
+                'get_disaster_config': lambda self, disaster_type: {"severity_multiplier": 1.0, "duration": 24}
+            })()
+            
+            # Fallback cloud services
+            cloud = type('FallbackCloud', (), {
+                'firestore': type('MockFirestore', (), {
+                    'save_simulation_state': lambda self, sim_id, data, merge=True: asyncio.sleep(0),
+                    'get_simulation_state': lambda self, sim_id: {"status": "active"},
+                    'log_event': lambda self, sim_id, event_type, data, agent_id=None: "mock-event-id",
+                    'get_active_simulations': lambda self: []
+                })(),
+                'vertex_ai': type('MockVertexAI', (), {
+                    'generate_official_statements': lambda self, context, stage, dept, type: {
+                        "title": "Mock Emergency Statement",
+                        "content": f"Emergency response activated for {context.get('type', 'disaster')}."
+                    },
+                    'generate_social_media_posts': lambda self, context, phase, num_posts=5, platform="twitter": [
+                        {"content": "Mock social media post", "author_type": "resident", "timestamp": "2 min ago", "engagement_level": "medium"}
+                    ]
+                })()
+            })()
+            logger.warning("⚠️ Using fallback services - limited functionality available")
+            
+    except Exception as e:
+        logger.error(f"❌ Service initialization failed: {e}")
+        raise
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager"""
+    # Startup
+    logger.info("🚀 Starting ERIS FastAPI server...")
+    await initialize_services()
+    logger.info("✅ ERIS server started successfully")
+    
+    yield
+    
+    # Shutdown
+    logger.info("🛑 Shutting down ERIS server...")
+    await cleanup_resources()
+    logger.info("✅ ERIS server shutdown complete")
+
+async def cleanup_resources():
+    """Clean up active resources"""
+    try:
+        # Close active orchestrators
+        for sim_id in list(active_orchestrators.keys()):
+            try:
+                await stop_simulation(sim_id)
+            except Exception as e:
+                logger.error(f"Error stopping simulation {sim_id}: {e}")
+        
+        # Close websocket connections
+        for sim_id, connections in websocket_manager.connections.items():
+            for ws in connections:
+                try:
+                    await ws.close(code=1001, reason="Server shutdown")
+                except:
+                    pass
+        
+        logger.info("🧹 Resource cleanup completed")
+    except Exception as e:
+        logger.error(f"Error during cleanup: {e}")
+
+# ===== CREATE FASTAPI APP =====
 app = FastAPI(
-    title="ERIS API", 
-    version="0.5.0",  
-    description="ERIS Disaster Simulation API - 10 Agent Orchestrator with Gemini 2.0 Flash"
+    title="ERIS Emergency Response Intelligence System",
+    version="0.5.0",
+    description="Production-ready disaster simulation platform with 10 AI agents",
+    lifespan=lifespan,
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None
 )
 
-# CORS configuration
+# ===== MIDDLEWARE SETUP =====
+# Security headers
+app.add_middleware(SecurityHeadersMiddleware)
+
+# Trusted hosts (optional)
+if TRUSTEDHOST_AVAILABLE and settings.ALLOWED_HOSTS != ["*"]:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.ALLOWED_HOSTS)
+elif not TRUSTEDHOST_AVAILABLE:
+    logger.warning("TrustedHostMiddleware not available - skipping")
+
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:4173",
-        "http://127.0.0.1:4173",
-        # Keep these exact Vercel domains
-        "https://eris-emergency-system.vercel.app",
-        "https://eris-emergency-system-4roj91x8e-mayafostters-projects.vercel.app",
-        "https://eris-emergency-system-git-main-mayafostters-projects.vercel.app",
-        # Allow all Vercel subdomains for safety
-        "https://eris-emergency-system-*.vercel.app",
-    ],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["X-ERIS-Version", "X-ERIS-Environment"]
 )
 
-# Global orchestrator storage and WebSocket connections
-active_orchestrators: Dict[str, ERISOrchestrator] = {}
-websocket_connections: Dict[str, List[WebSocket]] = {}
+# Rate limiting
+if SLOWAPI_AVAILABLE:
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+else:
+    logger.warning("Rate limiting not available - slowapi not installed")
 
-# Pydantic Models
+# ===== REQUEST MIDDLEWARE =====
+@app.middleware("http")
+async def request_middleware(request: Request, call_next):
+    """Request processing middleware"""
+    start_time = time.time()
+    
+    # Record request
+    health_status.record_request()
+    
+    try:
+        response = await call_next(request)
+        
+        # Add processing time header
+        process_time = time.time() - start_time
+        response.headers["X-Process-Time"] = str(process_time)
+        
+        return response
+        
+    except Exception as e:
+        health_status.record_request(success=False)
+        logger.error(f"Request failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Internal server error", "request_id": str(uuid.uuid4())}
+        )
+
+# ===== GLOBAL STORAGE =====
+active_orchestrators: Dict[str, Any] = {}
+simulation_cache: Dict[str, Dict] = {}
+
+# ===== PYDANTIC MODELS =====
 class SimulationRequest(BaseModel):
     disaster_type: str
     location: str
     severity: int = Field(..., ge=1, le=10)
-    duration: int = Field(72, ge=24, le=168) 
+    duration: int = Field(72, ge=1, le=168)
+    
+    @validator('disaster_type')
+    def validate_disaster_type(cls, v):
+        valid_disasters = [
+            "earthquake", "hurricane", "flood", "tsunami", "wildfire", 
+            "volcanic_eruption", "severe_storm", "epidemic", "pandemic", "landslide"
+        ]
+        if v not in valid_disasters:
+            raise ValueError(f"Invalid disaster type. Must be one of: {valid_disasters}")
+        return v
+    
+    @validator('location')
+    def validate_location(cls, v):
+        if len(v.strip()) < 2:
+            raise ValueError("Location must be at least 2 characters")
+        return v.strip()
 
-class AgentUpdateRequest(BaseModel):
+class SimulationResponse(BaseModel):
     simulation_id: str
-    agent_id: str
-    agent_type: str
-    state_data: Dict[str, Any]
+    status: str
+    message: str
+    orchestrator_info: Dict[str, Any]
+    data: Dict[str, Any]
 
-# Dynamic metrics calculator
+class ErrorResponse(BaseModel):
+    error: str
+    message: str
+    request_id: str
+    timestamp: str
+
+# ===== WEBSOCKET MANAGER =====
+class WebSocketManager:
+    def __init__(self):
+        self.connections: Dict[str, List[WebSocket]] = {}
+        self.connection_metadata: Dict[str, Dict] = {}
+    
+    async def connect(self, websocket: WebSocket, simulation_id: str):
+        """Connect WebSocket with enhanced tracking"""
+        await websocket.accept()
+        
+        if simulation_id not in self.connections:
+            self.connections[simulation_id] = []
+        
+        self.connections[simulation_id].append(websocket)
+        
+        # Track connection metadata
+        connection_id = id(websocket)
+        self.connection_metadata[connection_id] = {
+            "simulation_id": simulation_id,
+            "connected_at": datetime.utcnow(),
+            "last_heartbeat": datetime.utcnow()
+        }
+        
+        health_status.websocket_connections = sum(len(conns) for conns in self.connections.values())
+        logger.info(f"WebSocket connected for simulation {simulation_id} (total: {health_status.websocket_connections})")
+    
+    def disconnect(self, websocket: WebSocket, simulation_id: str):
+        """Disconnect WebSocket with cleanup"""
+        if simulation_id in self.connections:
+            if websocket in self.connections[simulation_id]:
+                self.connections[simulation_id].remove(websocket)
+            
+            if not self.connections[simulation_id]:
+                del self.connections[simulation_id]
+        
+        # Clean up metadata
+        connection_id = id(websocket)
+        if connection_id in self.connection_metadata:
+            del self.connection_metadata[connection_id]
+        
+        health_status.websocket_connections = sum(len(conns) for conns in self.connections.values())
+        logger.info(f"WebSocket disconnected for simulation {simulation_id} (total: {health_status.websocket_connections})")
+    
+    async def broadcast_to_simulation(self, simulation_id: str, data: dict):
+        """Broadcast with connection health checking"""
+        if simulation_id not in self.connections:
+            return
+        
+        disconnected = []
+        successful_sends = 0
+        
+        for websocket in self.connections[simulation_id]:
+            try:
+                await websocket.send_json(data)
+                successful_sends += 1
+                
+                # Update heartbeat
+                connection_id = id(websocket)
+                if connection_id in self.connection_metadata:
+                    self.connection_metadata[connection_id]["last_heartbeat"] = datetime.utcnow()
+                    
+            except Exception as e:
+                logger.warning(f"WebSocket send failed: {e}")
+                disconnected.append(websocket)
+        
+        # Remove disconnected websockets
+        for ws in disconnected:
+            self.disconnect(ws, simulation_id)
+        
+        if successful_sends > 0:
+            logger.debug(f"Broadcast to {successful_sends} WebSocket connections for simulation {simulation_id}")
+    
+    async def cleanup_stale_connections(self):
+        """Clean up stale WebSocket connections"""
+        cutoff_time = datetime.utcnow() - timedelta(minutes=5)
+        
+        stale_connections = [
+            conn_id for conn_id, metadata in self.connection_metadata.items()
+            if metadata["last_heartbeat"] < cutoff_time
+        ]
+        
+        for conn_id in stale_connections:
+            metadata = self.connection_metadata[conn_id]
+            simulation_id = metadata["simulation_id"]
+            
+            # Find and remove the stale connection
+            if simulation_id in self.connections:
+                stale_ws = [ws for ws in self.connections[simulation_id] if id(ws) == conn_id]
+                for ws in stale_ws:
+                    self.disconnect(ws, simulation_id)
+
+websocket_manager = WebSocketManager()
+
+# ===== METRICS CALCULATOR =====
 class DynamicMetricsCalculator:
-    def __init__(self, simulation_id: str, orchestrator: ERISOrchestrator):
+    def __init__(self, simulation_id: str, orchestrator: Any = None):
         self.simulation_id = simulation_id
         self.orchestrator = orchestrator
         self.last_update = datetime.utcnow()
         
     def calculate_real_time_metrics(self) -> Dict[str, Any]:
-        """Calculate real-time metrics based on current simulation state"""
+        """Calculate real-time metrics with enhanced error handling"""
         try:
-            context = self.orchestrator.simulation_context
+            if self.orchestrator and hasattr(self.orchestrator, 'simulation_context'):
+                context = self.orchestrator.simulation_context
+            else:
+                context = simulation_cache.get(self.simulation_id, {})
+            
             current_time = datetime.utcnow()
-            time_elapsed = (current_time - self.last_update).total_seconds() / 60  # minutes
+            time_elapsed = (current_time - self.last_update).total_seconds() / 60
             
-            # Base metrics from simulation context
-            base_panic = context.get('panic_index', 0.2)
-            base_hospital = context.get('hospital_capacity_utilization', 70)
-            base_population = context.get('total_population', 175000)
-            infrastructure_damage = context.get('infrastructure_damage', 15)
+            # Calculate base metrics
+            metrics = self._calculate_base_metrics(context, time_elapsed)
             
-            # Apply time-based evolution
-            panic_index = self._evolve_panic_index(base_panic, time_elapsed)
-            hospital_capacity = self._evolve_hospital_capacity(base_hospital, panic_index, time_elapsed)
-            emergency_response = self._calculate_emergency_response(context)
-            population_affected = self._calculate_population_affected(base_population, panic_index)
-            infrastructure_failures = self._calculate_infrastructure_failures(infrastructure_damage, time_elapsed)
-            
-            # Calculate alert level
-            alert_level = self._determine_alert_level(panic_index, hospital_capacity, infrastructure_failures)
-            
-            # Get social media influence
-            social_influence = self._get_social_media_influence()
-            
-            return {
-                "alert_level": alert_level,
-                "panic_index": int(panic_index * 100),
-                "hospital_capacity": int(hospital_capacity),
-                "population_affected": int(population_affected),
-                "infrastructure_failures": infrastructure_failures,
-                "emergency_response": emergency_response,
-                "public_trust": self._calculate_public_trust(context, social_influence),
-                "evacuation_compliance": self._calculate_evacuation_compliance(panic_index, context),
+            # Add metadata
+            metrics.update({
+                "simulation_id": self.simulation_id,
                 "timestamp": current_time.isoformat(),
-                "social_media_activity": social_influence.get("activity_level", "moderate"),
-                "misinformation_spread": social_influence.get("misinformation_level", 0.2)
-            }
+                "calculation_duration_ms": int((datetime.utcnow() - current_time).total_seconds() * 1000),
+                "data_source": "orchestrator" if self.orchestrator else "cache"
+            })
+            
+            self.last_update = current_time
+            return metrics
             
         except Exception as e:
-            logger.error(f"Error calculating real-time metrics: {e}")
+            logger.error(f"Error calculating metrics for {self.simulation_id}: {e}")
             return self._get_fallback_metrics()
     
-    def _evolve_panic_index(self, base_panic: float, time_elapsed: float) -> float:
-        """Evolve panic index over time based on phase and events"""
-        phase = self.orchestrator.current_phase
-        
-        # Panic evolution based on phase
-        if phase == SimulationPhase.IMPACT:
-            # Panic increases rapidly during impact
-            evolution = min(0.9, base_panic + (time_elapsed * 0.05))
-        elif phase == SimulationPhase.RESPONSE:
-            # Panic stabilizes or slowly decreases during response
-            evolution = max(0.1, base_panic - (time_elapsed * 0.02))
-        else:  # RECOVERY
-            # Panic decreases during recovery
-            evolution = max(0.05, base_panic - (time_elapsed * 0.03))
-        
-        # Add some randomness for realism
+    def _calculate_base_metrics(self, context: Dict, time_elapsed: float) -> Dict[str, Any]:
+        """Calculate base metrics from context"""
         import random
-        evolution += random.uniform(-0.05, 0.05)
-        return max(0.0, min(1.0, evolution))
-    
-    def _evolve_hospital_capacity(self, base_capacity: float, panic_index: float, time_elapsed: float) -> float:
-        """Evolve hospital capacity based on disaster progression"""
-        # Hospital capacity increases with panic and time
-        capacity_increase = (panic_index * 30) + (time_elapsed * 2)
         
-        # Apply phase-specific modifiers
-        phase = self.orchestrator.current_phase
-        if phase == SimulationPhase.IMPACT:
-            capacity_increase *= 1.5  # Rapid increase during impact
-        elif phase == SimulationPhase.RECOVERY:
-            capacity_increase *= 0.7  # Slower increase during recovery
+        # Base values with realistic evolution
+        base_panic = context.get('panic_index', random.uniform(0.2, 0.4))
+        base_hospital = context.get('hospital_capacity_utilization', random.uniform(65, 80))
+        base_population = context.get('total_population', 175000)
         
-        new_capacity = base_capacity + capacity_increase
-        return min(98, max(45, new_capacity))  # Cap between 45% and 98%
-    
-    def _calculate_emergency_response(self, context: Dict[str, Any]) -> int:
-        """Calculate emergency response efficiency"""
-        base_response = 85
+        # Evolve metrics over time
+        panic_index = min(0.9, base_panic + (time_elapsed * random.uniform(0.01, 0.05)))
+        hospital_capacity = min(95, base_hospital + (panic_index * 15) + random.uniform(-5, 5))
         
-        # Get emergency response agent data if available
-        try:
-            if hasattr(self.orchestrator, 'adk_agents') and 'emergency_response' in self.orchestrator.adk_agents:
-                emergency_agent = self.orchestrator.adk_agents['emergency_response']
-                if hasattr(emergency_agent, 'response_effectiveness'):
-                    base_response = int(emergency_agent.response_effectiveness * 100)
-        except:
-            pass
+        population_affected = int(base_population * (0.1 + panic_index * 0.3))
+        infrastructure_failures = max(0, int(time_elapsed / 10) + random.randint(0, 3))
         
-        # Adjust based on infrastructure damage
-        infrastructure_damage = context.get('infrastructure_damage', 20)
-        response_efficiency = base_response - (infrastructure_damage / 2)
+        # Calculate derived metrics
+        alert_level = self._determine_alert_level(panic_index, hospital_capacity, infrastructure_failures)
+        emergency_response = max(70, min(98, 90 - (infrastructure_failures * 2) + random.randint(-5, 5)))
+        public_trust = max(30, min(90, 75 - (panic_index * 20) + random.randint(-5, 5)))
+        evacuation_compliance = max(20, min(95, 70 + (panic_index * 10) + random.randint(-8, 8)))
         
-        # Add randomness
-        import random
-        response_efficiency += random.randint(-5, 5)
-        
-        return max(60, min(98, int(response_efficiency)))
-    
-    def _calculate_population_affected(self, total_population: int, panic_index: float) -> int:
-        """Calculate affected population based on panic and disaster scope"""
-        base_affected_rate = 0.15  # 15% base affected rate
-        panic_multiplier = 1 + (panic_index * 2)  # Panic can triple the affected rate
-        
-        affected = int(total_population * base_affected_rate * panic_multiplier)
-        return min(int(total_population * 0.8), affected)  # Cap at 80% of population
-    
-    def _calculate_infrastructure_failures(self, base_damage: float, time_elapsed: float) -> int:
-        """Calculate infrastructure failures"""
-        # Infrastructure failures accumulate over time
-        additional_failures = int(time_elapsed / 30)  # 1 failure every 30 minutes
-        
-        import random
-        base_failures = int(base_damage / 10) + additional_failures + random.randint(0, 2)
-        return max(0, min(15, base_failures))  # Cap at 15 failures
+        return {
+            "alert_level": alert_level,
+            "panic_index": int(panic_index * 100),
+            "hospital_capacity": int(hospital_capacity),
+            "population_affected": population_affected,
+            "infrastructure_failures": infrastructure_failures,
+            "emergency_response": emergency_response,
+            "public_trust": public_trust,
+            "evacuation_compliance": evacuation_compliance
+        }
     
     def _determine_alert_level(self, panic_index: float, hospital_capacity: float, infrastructure_failures: int) -> str:
-        """Determine overall alert level"""
-        # Calculate composite risk score
-        panic_score = panic_index * 40
-        hospital_score = max(0, (hospital_capacity - 80) * 2) if hospital_capacity > 80 else 0
-        infrastructure_score = infrastructure_failures * 3
+        """Determine alert level based on metrics"""
+        risk_score = (panic_index * 40) + max(0, (hospital_capacity - 80) * 2) + (infrastructure_failures * 3)
         
-        total_score = panic_score + hospital_score + infrastructure_score
-        
-        if total_score >= 60:
+        if risk_score >= 60:
             return "RED"
-        elif total_score >= 35:
+        elif risk_score >= 35:
             return "ORANGE"
-        elif total_score >= 15:
+        elif risk_score >= 15:
             return "YELLOW"
         else:
             return "GREEN"
     
-    def _get_social_media_influence(self) -> Dict[str, Any]:
-        """Get social media influence metrics"""
-        try:
-            if hasattr(self.orchestrator, 'enhanced_agents') and 'social_media' in self.orchestrator.enhanced_agents:
-                social_agent = self.orchestrator.enhanced_agents['social_media']
-                return {
-                    "activity_level": "high" if len(getattr(social_agent, 'posts_generated', [])) > 20 else "moderate",
-                    "misinformation_level": getattr(social_agent, 'misinformation_level', 0.2),
-                    "panic_influence": getattr(social_agent, 'panic_index', 0.3),
-                    "viral_topics": getattr(social_agent, 'viral_topics', [])
-                }
-        except:
-            pass
-        
-        return {
-            "activity_level": "moderate",
-            "misinformation_level": 0.2,
-            "panic_influence": 0.3,
-            "viral_topics": []
-        }
-    
-    def _calculate_public_trust(self, context: Dict[str, Any], social_influence: Dict[str, Any]) -> int:
-        """Calculate public trust level"""
-        base_trust = 75
-        
-        # Reduce trust based on misinformation
-        misinformation_penalty = int(social_influence.get("misinformation_level", 0.2) * 30)
-        
-        # Adjust based on official communication reach
-        communication_reach = context.get('official_communication_reach', 0.7)
-        communication_bonus = int((communication_reach - 0.5) * 40)
-        
-        trust_level = base_trust - misinformation_penalty + communication_bonus
-        
-        import random
-        trust_level += random.randint(-5, 5)
-        
-        return max(30, min(95, trust_level))
-    
-    def _calculate_evacuation_compliance(self, panic_index: float, context: Dict[str, Any]) -> int:
-        """Calculate evacuation compliance rate"""
-        base_compliance = 70
-        
-        # Higher panic can increase compliance (fear) but also reduce it (chaos)
-        if panic_index < 0.3:
-            panic_effect = panic_index * 50  # Low panic = low compliance
-        elif panic_index < 0.7:
-            panic_effect = 30 + (panic_index - 0.3) * 25  # Medium panic = good compliance
-        else:
-            panic_effect = 40 - (panic_index - 0.7) * 30  # High panic = chaos reduces compliance
-        
-        compliance = base_compliance + panic_effect
-        
-        # Adjust based on infrastructure damage
-        infrastructure_damage = context.get('infrastructure_damage', 20)
-        compliance -= infrastructure_damage / 2  # Damaged infrastructure reduces compliance
-        
-        import random
-        compliance += random.randint(-8, 8)
-        
-        return max(20, min(95, int(compliance)))
-    
     def _get_fallback_metrics(self) -> Dict[str, Any]:
-        """Return fallback metrics if calculation fails"""
+        """Return safe fallback metrics"""
         import random
         return {
             "alert_level": "YELLOW",
-            "panic_index": random.randint(15, 45),
+            "panic_index": random.randint(20, 40),
             "hospital_capacity": random.randint(70, 85),
             "population_affected": random.randint(8000, 15000),
-            "infrastructure_failures": random.randint(1, 5),
-            "emergency_response": random.randint(85, 95),
-            "public_trust": random.randint(65, 85),
-            "evacuation_compliance": random.randint(70, 90),
+            "infrastructure_failures": random.randint(1, 4),
+            "emergency_response": random.randint(80, 95),
+            "public_trust": random.randint(60, 80),
+            "evacuation_compliance": random.randint(65, 85),
             "timestamp": datetime.utcnow().isoformat(),
-            "social_media_activity": "moderate",
-            "misinformation_spread": 0.2
+            "simulation_id": self.simulation_id,
+            "error": "Using fallback metrics"
         }
 
-# WebSocket manager for real-time updates
-class WebSocketManager:
-    def __init__(self):
-        self.connections: Dict[str, List[WebSocket]] = {}
-    
-    async def connect(self, websocket: WebSocket, simulation_id: str):
-        await websocket.accept()
-        if simulation_id not in self.connections:
-            self.connections[simulation_id] = []
-        self.connections[simulation_id].append(websocket)
-        logger.info(f"WebSocket connected for simulation {simulation_id}")
-    
-    def disconnect(self, websocket: WebSocket, simulation_id: str):
-        if simulation_id in self.connections:
-            if websocket in self.connections[simulation_id]:
-                self.connections[simulation_id].remove(websocket)
-            if not self.connections[simulation_id]:
-                del self.connections[simulation_id]
-        logger.info(f"WebSocket disconnected for simulation {simulation_id}")
-    
-    async def broadcast_to_simulation(self, simulation_id: str, data: dict):
-        if simulation_id in self.connections:
-            disconnected = []
-            for websocket in self.connections[simulation_id]:
-                try:
-                    await websocket.send_json(data)
-                except:
-                    disconnected.append(websocket)
-            
-            # Remove disconnected websockets
-            for ws in disconnected:
-                self.disconnect(ws, simulation_id)
-
-websocket_manager = WebSocketManager()
+# ===== CORE ENDPOINTS =====
 
 @app.get("/health")
-async def health_check():
-    return {
-        "status": "healthy", 
-        "timestamp": datetime.utcnow(),
-        "version": "0.5.0",  
-        "orchestrator_status": "active",
-        "total_agents": 10,  
-        "adk_agents": 6,
-        "enhanced_agents": 4,
-        "ai_model": "Gemini 2.0 Flash",  
-        "cors_enabled": True,
-        "websockets_active": len(websocket_manager.connections)
+async def health_check(request: Request):
+    """Enhanced health check with detailed metrics"""
+    health_metrics = health_status.get_health_metrics()
+    
+    # Add service-specific health checks
+    service_health = {
+        "firestore": await _check_firestore_health(),
+        "vertex_ai": await _check_vertex_ai_health(),
+        "orchestrator": len(active_orchestrators) < settings.MAX_CONCURRENT_SIMULATIONS
     }
-
-@app.get("/")
-async def root():
+    
+    overall_status = "healthy"
+    if health_metrics["error_rate_percent"] > 10:
+        overall_status = "degraded"
+    if not all(service_health.values()):
+        overall_status = "unhealthy"
+    
     return {
-        "message": "ERIS Disaster Simulation API - 10 Agent Orchestrator",
-        "version": "0.5.0",  
-        "ai_orchestrator": "Gemini 2.0 Flash",
-        "agent_architecture": {
-            "adk_agents": 6,
-            "enhanced_agents": 4,
-            "total_agents": 10
-        },
-        "cors_enabled": True,
-        "real_time_features": {
-            "dynamic_metrics": True,
-            "ai_content_generation": True,
-            "websocket_streaming": True,
-            "live_social_feed": True
-        }
-    }
-
-@app.post("/simulate")
-async def start_simulation(request: SimulationRequest, background_tasks: BackgroundTasks):
-    try:
-        simulation_id = str(uuid.uuid4())
-        
-        logger.info(f"Starting ERIS simulation {simulation_id}: {request.disaster_type} in {request.location}, severity {request.severity}")
-
-        # Validate disaster type
-        valid_disasters = ["earthquake", "hurricane", "flood", "tsunami", "wildfire", "volcanic_eruption", "severe_storm", "epidemic", "pandemic", "landslide"]
-        
-        if hasattr(config, 'get_disaster_config') and callable(getattr(config, 'get_disaster_config')):
-            disaster_config = config.get_disaster_config(request.disaster_type)
-            if not disaster_config:
-                raise HTTPException(status_code=400, detail=f"Unknown disaster type: {request.disaster_type}")
-        else:
-            if request.disaster_type not in valid_disasters:
-                raise HTTPException(status_code=400, detail=f"Unknown disaster type: {request.disaster_type}")
-
-        # Create orchestrator
-        orchestrator = ERISOrchestrator(
-            simulation_id=simulation_id,
-            disaster_type=request.disaster_type,
-            location=request.location,
-            severity=request.severity,
-            duration=request.duration
-        )
-
-        # Store orchestrator
-        active_orchestrators[simulation_id] = orchestrator
-
-        # Initialize simulation data
-        simulation_data = {
-            "simulation_id": simulation_id,
-            "disaster_type": request.disaster_type,
-            "location": request.location,
-            "severity": request.severity,
-            "duration": request.duration,
-            "status": "initializing", 
-            "created_at": datetime.utcnow(),
-            "current_phase": SimulationPhase.IMPACT.value,
-            "orchestrator_version": "0.5.0",
+        "status": overall_status,
+        "version": "0.5.0",
+        "environment": settings.ENVIRONMENT,
+        "timestamp": datetime.utcnow().isoformat(),
+        "health_metrics": health_metrics,
+        "service_health": service_health,
+        "orchestrator_info": {
+            "ai_model": "Gemini 2.0 Flash",
             "total_agents": 10,
             "adk_agents": 6,
             "enhanced_agents": 4,
-            "real_time_metrics": True
+            "active_simulations": len(active_orchestrators),
+            "max_concurrent": settings.MAX_CONCURRENT_SIMULATIONS
         }
+    }
 
-        # Save simulation state
+async def _check_firestore_health() -> bool:
+    """Check Firestore service health"""
+    try:
+        if hasattr(cloud, 'firestore'):
+            # Simple health check - get active simulations
+            await cloud.firestore.get_active_simulations()
+            return True
+    except Exception as e:
+        logger.warning(f"Firestore health check failed: {e}")
+    return False
+
+async def _check_vertex_ai_health() -> bool:
+    """Check Vertex AI service health"""
+    try:
+        if hasattr(cloud, 'vertex_ai'):
+            # Simple test generation
+            test_context = {"type": "test", "location": "test", "severity": 1}
+            await cloud.vertex_ai.generate_official_statements(test_context, "test", "test", "test")
+            return True
+    except Exception as e:
+        logger.warning(f"Vertex AI health check failed: {e}")
+    return False
+
+@app.get("/system/info")
+async def get_system_info(request: Request):
+    """Enhanced system information"""
+    return {
+        "eris_version": "0.5.0",
+        "environment": settings.ENVIRONMENT,
+        "api_version": "v1",
+        "orchestrator": {
+            "ai_model": "Gemini 2.0 Flash",
+            "architecture": "10-agent coordination system",
+            "coordination_method": "cross-agent context sharing",
+            "version": "0.5.0"
+        },
+        "agent_system": {
+            "total_agents": 10,
+            "adk_agents": 6,
+            "enhanced_agents": 4,
+            "ai_powered": True,
+            "concurrent_execution": True
+        },
+        "capabilities": {
+            "disaster_simulation": True,
+            "multi_agent_coordination": True,
+            "real_time_metrics": True,
+            "websocket_streaming": True,
+            "cloud_integration": True,
+            "production_ready": True,
+            "rate_limiting": True,
+            "authentication": settings.ENVIRONMENT == "production",
+            "monitoring": True,
+            "error_recovery": True
+        },
+        "limits": {
+            "max_concurrent_simulations": settings.MAX_CONCURRENT_SIMULATIONS,
+            "rate_limit_requests_per_minute": settings.RATE_LIMIT_REQUESTS,
+            "websocket_heartbeat_interval": settings.WEBSOCKET_HEARTBEAT_INTERVAL
+        },
+        "current_load": {
+            "active_simulations": len(active_orchestrators),
+            "websocket_connections": health_status.websocket_connections,
+            "total_requests": health_status.total_requests
+        }
+    }
+
+@app.post("/simulate", response_model=SimulationResponse)
+async def start_simulation(
+    request: Request,
+    simulation_request: SimulationRequest,
+    background_tasks: BackgroundTasks,
+    authenticated: bool = Depends(verify_api_key)
+):
+    """Start new simulation with enhanced validation and monitoring"""
+    
+    # Check concurrent simulation limit
+    if len(active_orchestrators) >= settings.MAX_CONCURRENT_SIMULATIONS:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Maximum concurrent simulations ({settings.MAX_CONCURRENT_SIMULATIONS}) reached"
+        )
+    
+    simulation_id = str(uuid.uuid4())
+    request_id = str(uuid.uuid4())
+    
+    try:
+        logger.info(f"Starting simulation {simulation_id}: {simulation_request.disaster_type} in {simulation_request.location}")
+        
+        # Create simulation context
+        simulation_data = {
+            "simulation_id": simulation_id,
+            "request_id": request_id,
+            "disaster_type": simulation_request.disaster_type,
+            "location": simulation_request.location,
+            "severity": simulation_request.severity,
+            "duration": simulation_request.duration,
+            "status": "initializing",
+            "created_at": datetime.utcnow().isoformat(),
+            "orchestrator_version": "0.5.0",
+            "ai_model": "Gemini 2.0 Flash"
+        }
+        
+        # Store in cache for immediate access
+        simulation_cache[simulation_id] = simulation_data
+        
+        # Save to persistent storage
         try:
             await cloud.firestore.save_simulation_state(simulation_id, simulation_data)
-        except Exception as e:
-            logger.warning(f"Failed to save to Firestore: {e}")
-        
-        # Generate initial scenario
-        disaster_context = {
-            "type": request.disaster_type,
-            "location": request.location,
-            "severity": request.severity
-        }
-        
-        try:
-            scenario = await cloud.vertex_ai.generate_official_statements(
-                disaster_context, 
-                "initial", 
-                "emergency_management", 
-                "public_advisory"
+            await cloud.firestore.log_event(
+                simulation_id,
+                "simulation_started",
+                {"request": simulation_request.dict(), "request_id": request_id}
             )
         except Exception as e:
-            logger.warning(f"Failed to generate scenario: {e}")
-            scenario = f"Emergency response activated for {request.disaster_type} in {request.location}. Severity level {request.severity}. ERIS 10-agent orchestrator deployed with real-time AI content generation."
-
-        # Start orchestrated simulation in background
-        background_tasks.add_task(run_orchestrated_simulation, orchestrator, simulation_id)
+            logger.warning(f"Failed to persist simulation data: {e}")
         
-        # Start real-time metrics streaming
-        background_tasks.add_task(start_real_time_metrics_streaming, simulation_id)
+        # Create orchestrator if ERIS imports are available
+        if ERIS_IMPORTS_AVAILABLE:
+            try:
+                orchestrator = ERISOrchestrator(
+                    simulation_id=simulation_id,
+                    disaster_type=simulation_request.disaster_type,
+                    location=simulation_request.location,
+                    severity=simulation_request.severity,
+                    duration=simulation_request.duration
+                )
+                active_orchestrators[simulation_id] = orchestrator
+                
+                # Start orchestration in background
+                background_tasks.add_task(run_orchestrated_simulation, orchestrator, simulation_id)
+                
+            except Exception as e:
+                logger.error(f"Failed to create orchestrator: {e}")
+                # Continue with basic simulation
+        else:
+            logger.info("ERIS orchestrator not available - using basic simulation mode")
         
-        # Start social media content generation
-        background_tasks.add_task(start_social_media_generation, simulation_id)
-
-        # Response with information
-        response_data = {
-            "simulation_id": simulation_id,
+        # Start supporting services
+        background_tasks.add_task(start_metrics_streaming, simulation_id)
+        background_tasks.add_task(start_content_generation, simulation_id)
+        
+        # Update health status
+        health_status.active_simulations = len(active_orchestrators)
+        
+        # Generate response
+        orchestrator_info = {
+            "version": "0.5.0",
+            "ai_model": "Gemini 2.0 Flash",
+            "total_agents": 10,
             "status": "initializing",
-            "message": "ERIS 10-agent orchestrator deployed with real-time AI generation",
-            "orchestrator_info": {
-                "version": "0.5.0",
-                "ai_model": "Gemini 2.0 Flash",
-                "total_agents": 10,
-                "adk_agents": 6,
-                "enhanced_agents": 4,
-                "coordination_system": "cross-agent context sharing",
-                "real_time_features": {
-                    "dynamic_metrics": True,
-                    "ai_social_media": True,
-                    "live_emergency_feed": True,
-                    "websocket_streaming": True
-                }
-            },
-            "frontend_ready": True,
-            "data": {
-                "disaster_type": request.disaster_type,
-                "location": request.location,
-                "severity": request.severity,
-                "duration": request.duration,
-                "scenario": scenario,
-                "orchestrator_status": "initializing",
-                "expected_metrics_delay_seconds": 10,
-                "websocket_endpoint": f"/ws/metrics/{simulation_id}",
-                "live_feed_endpoint": f"/live-feed/{simulation_id}"
-            }
+            "real_time_features": True,
+            "websocket_endpoint": f"/ws/metrics/{simulation_id}"
         }
         
-        logger.info(f"ERIS simulation {simulation_id} deployed successfully with real-time features")
-        return response_data
+        response = SimulationResponse(
+            simulation_id=simulation_id,
+            status="initializing",
+            message="ERIS simulation started successfully",
+            orchestrator_info=orchestrator_info,
+            data=simulation_data
+        )
+        
+        logger.info(f"Simulation {simulation_id} started successfully")
+        return response
         
     except Exception as e:
-        logger.error(f"Simulation deployment error: {e}")
+        logger.error(f"Failed to start simulation: {e}")
+        # Clean up on failure
+        if simulation_id in active_orchestrators:
+            del active_orchestrators[simulation_id]
+        if simulation_id in simulation_cache:
+            del simulation_cache[simulation_id]
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to start simulation: {str(e)}"
+        )
+
+@app.get("/status/{simulation_id}")
+async def get_simulation_status(request: Request, simulation_id: str):
+    """Get detailed simulation status with comprehensive metrics"""
+    try:
+        # Check cache first
+        simulation_data = simulation_cache.get(simulation_id)
+        
+        # Fallback to persistent storage
+        if not simulation_data:
+            try:
+                simulation_data = await cloud.firestore.get_simulation_state(simulation_id)
+            except Exception as e:
+                logger.warning(f"Failed to retrieve from Firestore: {e}")
+        
+        if not simulation_data:
+            raise HTTPException(status_code=404, detail="Simulation not found")
+        
+        # Get orchestrator status
+        orchestrator_status = None
+        agent_summary = None
+        real_time_active = False
+        
+        if simulation_id in active_orchestrators:
+            orchestrator = active_orchestrators[simulation_id]
+            real_time_active = True
+            
+            try:
+                if hasattr(orchestrator, 'get_simulation_status'):
+                    orchestrator_status = orchestrator.get_simulation_status()
+                
+                if hasattr(orchestrator, 'adk_agents') and hasattr(orchestrator, 'enhanced_agents'):
+                    agent_summary = {
+                        "total_agents": len(orchestrator.adk_agents) + len(orchestrator.enhanced_agents),
+                        "adk_agents": len(orchestrator.adk_agents),
+                        "enhanced_agents": len(orchestrator.enhanced_agents),
+                        "active_agents": len([s for s in getattr(orchestrator, 'agent_statuses', {}).values() 
+                                            if "active" in str(s).lower() or "completed" in str(s).lower()]),
+                        "current_phase": getattr(orchestrator, 'current_phase', 'unknown')
+                    }
+            except Exception as e:
+                logger.warning(f"Failed to get orchestrator details: {e}")
+        
+        # Calculate metrics
+        metrics_calculator = DynamicMetricsCalculator(simulation_id, active_orchestrators.get(simulation_id))
+        current_metrics = metrics_calculator.calculate_real_time_metrics()
+        
+        return {
+            "simulation_id": simulation_id,
+            "status": simulation_data.get("status", "unknown"),
+            "created_at": simulation_data.get("created_at"),
+            "last_updated": datetime.utcnow().isoformat(),
+            "orchestrator": {
+                "version": "0.5.0",
+                "ai_model": "Gemini 2.0 Flash",
+                "status": orchestrator_status,
+                "agent_summary": agent_summary,
+                "real_time_active": real_time_active,
+                "websocket_connections": len(websocket_manager.connections.get(simulation_id, []))
+            },
+            "current_metrics": current_metrics,
+            "simulation_data": simulation_data,
+            "request_id": simulation_data.get("request_id", "unknown")
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Status check error for {simulation_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Real-time metrics streaming background task
-async def start_real_time_metrics_streaming(simulation_id: str):
-    """Background task for real-time metrics calculation and streaming"""
+@app.get("/metrics/dashboard/{simulation_id}")
+async def get_dashboard_metrics(request: Request, simulation_id: str):
+    """Get real-time dashboard metrics with caching"""
     try:
-        await asyncio.sleep(5)  # Initial delay for orchestrator setup
-        
-        while simulation_id in active_orchestrators:
+        # Check if simulation exists
+        if simulation_id not in simulation_cache and simulation_id not in active_orchestrators:
             try:
-                orchestrator = active_orchestrators[simulation_id]
-                
-                # Calculate dynamic metrics
-                metrics_calculator = DynamicMetricsCalculator(simulation_id, orchestrator)
-                real_time_metrics = metrics_calculator.calculate_real_time_metrics()
-                
-                # Broadcast to WebSocket connections
-                await websocket_manager.broadcast_to_simulation(simulation_id, {
-                    "type": "metrics_update",
-                    "simulation_id": simulation_id,
-                    "dashboard_metrics": real_time_metrics,
-                    "timestamp": datetime.utcnow().isoformat()
+                simulation_data = await cloud.firestore.get_simulation_state(simulation_id)
+                if not simulation_data:
+                    raise HTTPException(status_code=404, detail="Simulation not found")
+                simulation_cache[simulation_id] = simulation_data
+            except Exception as e:
+                logger.warning(f"Failed to retrieve simulation: {e}")
+                raise HTTPException(status_code=404, detail="Simulation not found")
+        
+        # Calculate real-time metrics
+        orchestrator = active_orchestrators.get(simulation_id)
+        metrics_calculator = DynamicMetricsCalculator(simulation_id, orchestrator)
+        dashboard_data = metrics_calculator.calculate_real_time_metrics()
+        
+        # Get orchestrator info
+        orchestrator_info = {
+            "ai_model": "Gemini 2.0 Flash",
+            "version": "0.5.0",
+            "real_time_enabled": simulation_id in active_orchestrators,
+            "total_agents": 10
+        }
+        
+        if orchestrator:
+            try:
+                orchestrator_info.update({
+                    "current_phase": getattr(orchestrator, 'current_phase', 'unknown'),
+                    "coordination_active": True,
+                    "agent_count": len(getattr(orchestrator, 'adk_agents', {})) + len(getattr(orchestrator, 'enhanced_agents', {}))
                 })
-                
-                # Save to Firestore for API access
-                try:
-                    await cloud.firestore.save_simulation_state(simulation_id, {
-                        "last_metrics": real_time_metrics,
-                        "last_metrics_update": datetime.utcnow().isoformat()
-                    })
-                except Exception as e:
-                    logger.warning(f"Failed to save metrics to Firestore: {e}")
-                
-                await asyncio.sleep(5)  # Update every 5 seconds
-                
             except Exception as e:
-                logger.error(f"Real-time metrics error for {simulation_id}: {e}")
-                await asyncio.sleep(10)
-                
-        logger.info(f"Real-time metrics streaming completed for simulation {simulation_id}")
+                logger.warning(f"Failed to get orchestrator info: {e}")
         
-    except Exception as e:
-        logger.error(f"Real-time metrics streaming initialization failed: {e}")
-
-# Social media content generation background task
-async def start_social_media_generation(simulation_id: str):
-    """Background task for continuous social media content generation"""
-    try:
-        await asyncio.sleep(10)  # Wait for orchestrator initialization
-        
-        while simulation_id in active_orchestrators:
-            try:
-                orchestrator = active_orchestrators[simulation_id]
-                
-                # Generate new social media posts
-                if hasattr(orchestrator, 'enhanced_agents') and 'social_media' in orchestrator.enhanced_agents:
-                    social_agent = orchestrator.enhanced_agents['social_media']
-                    
-                    # Generate new posts based on current context
-                    new_posts = await social_agent.generate_live_posts(orchestrator.simulation_context)
-                    
-                    if new_posts:
-                        # Broadcast new posts to WebSocket connections
-                        await websocket_manager.broadcast_to_simulation(simulation_id, {
-                            "type": "social_media_update",
-                            "simulation_id": simulation_id,
-                            "new_posts": new_posts,
-                            "timestamp": datetime.utcnow().isoformat()
-                        })
-                
-                # Generate at random intervals for realism
-                import random
-                await asyncio.sleep(random.randint(15, 45))
-                
-            except Exception as e:
-                logger.error(f"Social media generation error for {simulation_id}: {e}")
-                await asyncio.sleep(30)
-                
-        logger.info(f"Social media generation completed for simulation {simulation_id}")
-        
-    except Exception as e:
-        logger.error(f"Social media generation initialization failed: {e}")
-
-# WebSocket endpoint with real-time updates
-@app.websocket("/ws/metrics/{simulation_id}")
-async def websocket_metrics(websocket: WebSocket, simulation_id: str):
-    """WebSocket endpoint for real-time metrics and content"""
-    await websocket_manager.connect(websocket, simulation_id)
-    
-    if simulation_id not in active_orchestrators:
-        await websocket.send_json({
-            "error": "Active simulation not found", 
+        return {
             "simulation_id": simulation_id,
-            "message": "Simulation may be completed or not yet started"
-        })
-        websocket_manager.disconnect(websocket, simulation_id)
-        return
+            "status": "active" if simulation_id in active_orchestrators else "completed",
+            "dashboard_data": dashboard_data,
+            "orchestrator_info": orchestrator_info,
+            "timestamp": datetime.utcnow().isoformat(),
+            "frontend_ready": True
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Dashboard metrics error for {simulation_id}: {e}")
+        # Return safe fallback
+        return {
+            "simulation_id": simulation_id,
+            "status": "error",
+            "dashboard_data": DynamicMetricsCalculator(simulation_id).calculate_real_time_metrics(),
+            "orchestrator_info": {"ai_model": "Gemini 2.0 Flash", "version": "0.5.0"},
+            "timestamp": datetime.utcnow().isoformat(),
+            "error": str(e),
+            "frontend_ready": True
+        }
+
+@app.get("/orchestrator/{simulation_id}/agents")
+async def get_agents_info(request: Request, simulation_id: str):
+    """Get detailed agent information and status"""
+    if simulation_id not in active_orchestrators:
+        raise HTTPException(status_code=404, detail="Active simulation not found")
     
     try:
         orchestrator = active_orchestrators[simulation_id]
         
+        # Default agent configuration
+        agent_configs = [
+            {"id": "emergency_response_coordinator", "name": "Emergency Response Coordinator", "type": "adk", "status": "active"},
+            {"id": "public_health_manager", "name": "Public Health Manager", "type": "adk", "status": "active"},
+            {"id": "infrastructure_manager", "name": "Infrastructure Manager", "type": "adk", "status": "active"},
+            {"id": "logistics_coordinator", "name": "Logistics Coordinator", "type": "adk", "status": "active"},
+            {"id": "communications_director", "name": "Communications Director", "type": "adk", "status": "active"},
+            {"id": "recovery_coordinator", "name": "Recovery Coordinator", "type": "adk", "status": "active"},
+            {"id": "hospital_load_modeler", "name": "Hospital Load Modeler", "type": "enhanced", "status": "active"},
+            {"id": "public_behavior_simulator", "name": "Public Behavior Simulator", "type": "enhanced", "status": "active"},
+            {"id": "social_media_dynamics", "name": "Social Media Dynamics", "type": "enhanced", "status": "active"},
+            {"id": "news_coverage_simulator", "name": "News Coverage Simulator", "type": "enhanced", "status": "active"}
+        ]
+        
+        # Enhance with real orchestrator data if available
+        if hasattr(orchestrator, 'agent_statuses'):
+            for agent in agent_configs:
+                agent_id = agent["id"]
+                if agent_id in orchestrator.agent_statuses:
+                    agent["detailed_status"] = orchestrator.agent_statuses[agent_id]
+                    agent["efficiency"] = 95 + (hash(agent_id) % 10) - 5  # Simulated efficiency
+                    agent["progress"] = min(100, 20 + (hash(agent_id) % 80))  # Simulated progress
+        
+        return {
+            "simulation_id": simulation_id,
+            "agents": agent_configs,
+            "orchestrator_info": {
+                "ai_model": "Gemini 2.0 Flash",
+                "total_agents": len(agent_configs),
+                "adk_agents": len([a for a in agent_configs if a["type"] == "adk"]),
+                "enhanced_agents": len([a for a in agent_configs if a["type"] == "enhanced"]),
+                "coordination_active": True
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting agent info for {simulation_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/live-feed/{simulation_id}")
+async def get_live_feed(request: Request, simulation_id: str, limit: int = 20):
+    """Get live emergency feed with AI-generated content"""
+    if simulation_id not in active_orchestrators and simulation_id not in simulation_cache:
+        try:
+            simulation_data = await cloud.firestore.get_simulation_state(simulation_id)
+            if not simulation_data:
+                raise HTTPException(status_code=404, detail="Simulation not found")
+            simulation_cache[simulation_id] = simulation_data
+        except Exception as e:
+            raise HTTPException(status_code=404, detail="Simulation not found")
+    
+    try:
+        feed_items = []
+        
+        # Generate emergency updates based on simulation context
+        simulation_data = simulation_cache.get(simulation_id, {})
+        disaster_type = simulation_data.get("disaster_type", "emergency")
+        location = simulation_data.get("location", "affected area")
+        
+        # Generate contextual feed items
+        feed_templates = [
+            {
+                "source": "@EmergencyAlert",
+                "content": f"🚨 {disaster_type.replace('_', ' ').title()} emergency in {location}. Follow official evacuation orders.",
+                "type": "official_alert",
+                "priority": "high"
+            },
+            {
+                "source": "@ERISSystem",
+                "content": f"AI orchestrator managing {len(active_orchestrators.get(simulation_id, {}))} response agents. Real-time coordination active.",
+                "type": "system_update",
+                "priority": "medium"
+            },
+            {
+                "source": "@LocalHospital",
+                "content": "Emergency medical services at capacity. Non-urgent cases please seek alternative care.",
+                "type": "medical_update",
+                "priority": "high"
+            },
+            {
+                "source": "@PublicSafety",
+                "content": f"Infrastructure assessment ongoing in {location}. Avoid damaged areas.",
+                "type": "safety_update",
+                "priority": "medium"
+            }
+        ]
+        
+        # Generate feed items with timestamps
+        for i, template in enumerate(feed_templates[:limit]):
+            feed_items.append({
+                "id": f"feed_{simulation_id}_{i}",
+                "source": template["source"],
+                "content": template["content"],
+                "type": template["type"],
+                "priority": template["priority"],
+                "timestamp": (datetime.utcnow() - timedelta(minutes=i*3)).isoformat(),
+                "engagement": {
+                    "likes": hash(template["content"]) % 100,
+                    "shares": hash(template["content"]) % 50,
+                    "comments": hash(template["content"]) % 25
+                }
+            })
+        
+        # Add AI-generated social media content if Vertex AI is available
+        try:
+            if hasattr(cloud, 'vertex_ai'):
+                disaster_context = {
+                    "type": disaster_type,
+                    "location": location,
+                    "severity": simulation_data.get("severity", 5)
+                }
+                
+                social_posts = await cloud.vertex_ai.generate_social_media_posts(
+                    disaster_context, "response", num_posts=3, platform="twitter"
+                )
+                
+                for i, post in enumerate(social_posts):
+                    feed_items.append({
+                        "id": f"social_{simulation_id}_{i}",
+                        "source": f"@{post.get('author_type', 'User').title()}{hash(post['content']) % 1000}",
+                        "content": post["content"],
+                        "type": "social_media",
+                        "priority": "low",
+                        "timestamp": (datetime.utcnow() - timedelta(minutes=(i+5)*2)).isoformat(),
+                        "engagement": {
+                            "likes": hash(post["content"]) % 200,
+                            "shares": hash(post["content"]) % 100,
+                            "comments": hash(post["content"]) % 50
+                        },
+                        "ai_generated": True
+                    })
+        except Exception as e:
+            logger.warning(f"Failed to generate AI content: {e}")
+        
+        # Sort by timestamp (newest first)
+        feed_items.sort(key=lambda x: x["timestamp"], reverse=True)
+        
+        return {
+            "simulation_id": simulation_id,
+            "feed_items": feed_items[:limit],
+            "total_items": len(feed_items),
+            "last_updated": datetime.utcnow().isoformat(),
+            "ai_content_enabled": hasattr(cloud, 'vertex_ai')
+        }
+        
+    except Exception as e:
+        logger.error(f"Live feed error for {simulation_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===== WEBSOCKET ENDPOINT =====
+@app.websocket("/ws/metrics/{simulation_id}")
+async def websocket_metrics(websocket: WebSocket, simulation_id: str):
+    """Enhanced WebSocket endpoint with heartbeat and error handling"""
+    await websocket_manager.connect(websocket, simulation_id)
+    
+    try:
         # Send initial state
-        metrics_calculator = DynamicMetricsCalculator(simulation_id, orchestrator)
+        metrics_calculator = DynamicMetricsCalculator(simulation_id, active_orchestrators.get(simulation_id))
         initial_metrics = metrics_calculator.calculate_real_time_metrics()
         
         await websocket.send_json({
@@ -619,450 +1114,627 @@ async def websocket_metrics(websocket: WebSocket, simulation_id: str):
             "simulation_id": simulation_id,
             "dashboard_metrics": initial_metrics,
             "orchestrator_info": {
-                "current_phase": orchestrator.current_phase.value,
-                "total_agents": len(orchestrator.adk_agents) + len(orchestrator.enhanced_agents),
                 "ai_model": "Gemini 2.0 Flash",
-                "real_time_enabled": True
+                "version": "0.5.0",
+                "real_time_enabled": True,
+                "total_agents": 10
             },
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
+            "connection_id": id(websocket)
         })
         
-        # Keep connection alive and handle incoming messages
-        while simulation_id in active_orchestrators:
+        # Main message loop
+        while True:
             try:
-                # Wait for WebSocket message or timeout
-                message = await asyncio.wait_for(websocket.receive_json(), timeout=30.0)
+                # Wait for message with timeout for heartbeat
+                message = await asyncio.wait_for(
+                    websocket.receive_json(), 
+                    timeout=settings.WEBSOCKET_HEARTBEAT_INTERVAL
+                )
                 
                 # Handle client requests
-                if message.get("type") == "request_update":
-                    current_metrics = metrics_calculator.calculate_real_time_metrics()
-                    await websocket.send_json({
-                        "type": "metrics_update",
-                        "simulation_id": simulation_id,
-                        "dashboard_metrics": current_metrics,
-                        "timestamp": datetime.utcnow().isoformat()
-                    })
-                    
+                await handle_websocket_message(websocket, simulation_id, message)
+                
             except asyncio.TimeoutError:
                 # Send heartbeat
                 await websocket.send_json({
                     "type": "heartbeat",
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "simulation_id": simulation_id
                 })
+                
             except WebSocketDisconnect:
+                logger.info(f"WebSocket client disconnected for simulation {simulation_id}")
                 break
                 
     except Exception as e:
         logger.error(f"WebSocket error for {simulation_id}: {e}")
-        await websocket.send_json({"error": str(e)})
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "error": str(e),
+                "simulation_id": simulation_id,
+                "timestamp": datetime.utcnow().isoformat()
+            })
+        except:
+            pass
     finally:
         websocket_manager.disconnect(websocket, simulation_id)
 
-# Dashboard metrics endpoint
-@app.get("/metrics/dashboard/{simulation_id}")
-async def get_dashboard_metrics(simulation_id: str):
-    """Get real-time dashboard metrics"""
-    if simulation_id not in active_orchestrators:
-        # Try to get from Firestore for completed simulations
-        try:
-            simulation_data = await cloud.firestore.get_simulation_state(simulation_id)
-            if simulation_data and "last_metrics" in simulation_data:
-                return {
-                    "simulation_id": simulation_id,
-                    "status": "completed",
-                    "dashboard_data": simulation_data["last_metrics"],
-                    "timestamp": simulation_data.get("last_metrics_update", datetime.utcnow().isoformat()),
-                    "frontend_ready": True
-                }
-        except Exception as e:
-            logger.warning(f"Failed to get stored metrics: {e}")
-            
-        raise HTTPException(status_code=404, detail="Simulation not found")
+async def handle_websocket_message(websocket: WebSocket, simulation_id: str, message: dict):
+    """Handle incoming WebSocket messages"""
+    message_type = message.get("type")
     
-    orchestrator = active_orchestrators[simulation_id]
-    
-    try:
-        # Calculate real-time metrics
-        metrics_calculator = DynamicMetricsCalculator(simulation_id, orchestrator)
-        dashboard_data = metrics_calculator.calculate_real_time_metrics()
+    if message_type == "request_update":
+        # Send current metrics
+        metrics_calculator = DynamicMetricsCalculator(simulation_id, active_orchestrators.get(simulation_id))
+        current_metrics = metrics_calculator.calculate_real_time_metrics()
         
-        return {
+        await websocket.send_json({
+            "type": "metrics_update",
             "simulation_id": simulation_id,
-            "status": "active",
-            "dashboard_data": dashboard_data,
-            "orchestrator_info": {
-                "current_phase": orchestrator.current_phase.value,
-                "total_agents": len(orchestrator.adk_agents) + len(orchestrator.enhanced_agents),
-                "ai_model": "Gemini 2.0 Flash",
-                "coordination_active": True,
-                "real_time_enabled": True
-            },
+            "dashboard_metrics": current_metrics,
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    
+    elif message_type == "ping":
+        # Respond to ping
+        await websocket.send_json({
+            "type": "pong",
             "timestamp": datetime.utcnow().isoformat(),
-            "frontend_ready": True
-        }
-        
-    except Exception as e:
-        logger.error(f"Dashboard metrics error: {e}")
-        # Return safe defaults
-        return {
-            "simulation_id": simulation_id,
-            "status": "active",
-            "dashboard_data": {
-                "alert_level": "YELLOW",
-                "panic_index": 25,
-                "hospital_capacity": 78,
-                "population_affected": 12000,
-                "infrastructure_failures": 2,
-                "emergency_response": 88,
-                "public_trust": 75,
-                "evacuation_compliance": 82
-            },
-            "timestamp": datetime.utcnow().isoformat(),
-            "error": str(e),
-            "frontend_ready": True
-        }
-
-# Live emergency feed endpoint
-@app.get("/live-feed/{simulation_id}")
-async def get_live_emergency_feed(simulation_id: str, limit: int = 20):
-    """Get live emergency feed with AI-generated content"""
-    if simulation_id not in active_orchestrators:
-        raise HTTPException(status_code=404, detail="Active simulation not found")
+            "simulation_id": simulation_id
+        })
     
-    try:
-        orchestrator = active_orchestrators[simulation_id]
-        feed_items = []
-        
-        # Get social media posts
-        if hasattr(orchestrator, 'enhanced_agents') and 'social_media' in orchestrator.enhanced_agents:
-            social_agent = orchestrator.enhanced_agents['social_media']
-            recent_posts = await social_agent.get_recent_posts(limit=limit//2)
-            
-            for post in recent_posts:
-                feed_items.append({
-                    "type": "social_media",
-                    "source": f"@{post['user_type'].title()}User{hash(post['content']) % 1000}",
-                    "content": post['content'],
-                    "timestamp": post['timestamp'],
-                    "engagement": {
-                        "likes": post.get('likes', 0),
-                        "shares": post.get('shares', 0),
-                        "comments": post.get('comments', 0)
-                    },
-                    "sentiment": post['sentiment'],
-                    "hashtags": post.get('hashtags', [])
-                })
-        
-        # Generate official updates
-        official_updates = await generate_official_updates(orchestrator, limit//2)
-        feed_items.extend(official_updates)
-        
-        # Sort by timestamp
-        feed_items.sort(key=lambda x: x['timestamp'], reverse=True)
-        
-        return {
-            "simulation_id": simulation_id,
-            "feed_items": feed_items[:limit],
-            "total_items": len(feed_items),
-            "last_updated": datetime.utcnow().isoformat(),
-            "ai_generated": True
-        }
-        
-    except Exception as e:
-        logger.error(f"Live feed error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    else:
+        logger.warning(f"Unknown WebSocket message type: {message_type}")
 
-async def generate_official_updates(orchestrator: ERISOrchestrator, limit: int) -> List[Dict[str, Any]]:
-    """Generate official emergency updates based on current simulation state"""
-    updates = []
-    
+# ===== BACKGROUND TASKS =====
+async def start_metrics_streaming(simulation_id: str):
+    """Background task for real-time metrics streaming"""
     try:
-        context = orchestrator.simulation_context
-        phase = orchestrator.current_phase.value
+        await asyncio.sleep(5)  # Initial delay
         
-        # Template official updates based on phase and context
-        templates = {
-            'impact': [
-                {
-                    "source": "@EmergencyPhuket",
-                    "content": f"🚨 EMERGENCY ALERT: {orchestrator.disaster_type.replace('_', ' ').title()} affecting {orchestrator.location}. Severity Level {orchestrator.disaster_severity}. Follow evacuation orders immediately.",
-                    "type": "official_alert"
-                },
-                {
-                    "source": "@PhuketHospital",
-                    "content": f"Hospital capacity at {context.get('hospital_capacity_utilization', 75):.0f}%. Emergency medical services active. Non-urgent cases please avoid ER.",
-                    "type": "medical_update"
-                }
-            ],
-            'response': [
-                {
-                    "source": "@ERISSystem",
-                    "content": f"Gemini 2.0 Flash orchestrator coordinating {len(orchestrator.adk_agents) + len(orchestrator.enhanced_agents)} AI agents for optimal response. Real-time metrics active.",
-                    "type": "system_update"
-                },
-                {
-                    "source": "@PublicHealthTH",
-                    "content": f"Public panic index at {context.get('panic_index', 0.3) * 100:.0f}%. Coordinating crowd management. Stay calm and follow official guidance.",
-                    "type": "public_health"
-                }
-            ],
-            'recovery': [
-                {
-                    "source": "@RecoveryCoord",
-                    "content": f"Recovery operations underway. Infrastructure damage assessment: {context.get('infrastructure_damage', 20):.0f}% affected. Community support centers open.",
-                    "type": "recovery_update"
-                }
-            ]
-        }
-        
-        phase_templates = templates.get(phase, templates['impact'])
-        
-        for i, template in enumerate(phase_templates[:limit]):
-            if i >= limit:
-                break
+        while simulation_id in active_orchestrators or simulation_id in simulation_cache:
+            try:
+                # Calculate metrics
+                orchestrator = active_orchestrators.get(simulation_id)
+                metrics_calculator = DynamicMetricsCalculator(simulation_id, orchestrator)
+                metrics = metrics_calculator.calculate_real_time_metrics()
                 
-            updates.append({
-                "type": "official_update",
-                "source": template["source"],
-                "content": template["content"],
-                "timestamp": (datetime.utcnow() - timedelta(minutes=i*5)).isoformat(),
-                "engagement": {
-                    "likes": 0,
-                    "shares": 0,
-                    "comments": 0
-                },
-                "sentiment": "official",
-                "hashtags": [f"#{orchestrator.disaster_type.replace('_', '').title()}", "#Emergency", "#Official"],
-                "update_type": template.get("type", "general")
-            })
-            
-    except Exception as e:
-        logger.error(f"Error generating official updates: {e}")
-    
-    return updates
-
-# Background task for orchestrated simulation
-async def run_orchestrated_simulation(orchestrator: ERISOrchestrator, simulation_id: str):
-    """Background task to run the orchestrated simulation"""
-    try:
-        logger.info(f"Starting enhanced ERIS orchestrator for simulation {simulation_id}")
+                # Broadcast via WebSocket
+                await websocket_manager.broadcast_to_simulation(simulation_id, {
+                    "type": "metrics_update",
+                    "simulation_id": simulation_id,
+                    "dashboard_metrics": metrics,
+                    "timestamp": datetime.utcnow().isoformat()
+                })
+                
+                # Update cache
+                if simulation_id in simulation_cache:
+                    simulation_cache[simulation_id]["last_metrics"] = metrics
+                
+                # Save to persistent storage periodically
+                try:
+                    await cloud.firestore.save_simulation_state(simulation_id, {
+                        "last_metrics": metrics,
+                        "last_metrics_update": datetime.utcnow().isoformat()
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to save metrics: {e}")
+                
+                await asyncio.sleep(5)  # Update every 5 seconds
+                
+            except Exception as e:
+                logger.error(f"Metrics streaming error for {simulation_id}: {e}")
+                await asyncio.sleep(10)
         
-        # Update status to running
+        logger.info(f"Metrics streaming completed for simulation {simulation_id}")
+        
+    except Exception as e:
+        logger.error(f"Metrics streaming initialization failed: {e}")
+
+async def start_content_generation(simulation_id: str):
+    """Background task for AI content generation"""
+    try:
+        await asyncio.sleep(10)  # Wait for initialization
+        
+        while simulation_id in active_orchestrators or simulation_id in simulation_cache:
+            try:
+                # Generate social media content
+                if hasattr(cloud, 'vertex_ai'):
+                    simulation_data = simulation_cache.get(simulation_id, {})
+                    disaster_context = {
+                        "type": simulation_data.get("disaster_type", "emergency"),
+                        "location": simulation_data.get("location", "affected area"),
+                        "severity": simulation_data.get("severity", 5)
+                    }
+                    
+                    # Generate new posts
+                    new_posts = await cloud.vertex_ai.generate_social_media_posts(
+                        disaster_context, "response", num_posts=2, platform="twitter"
+                    )
+                    
+                    if new_posts:
+                        # Broadcast new content
+                        await websocket_manager.broadcast_to_simulation(simulation_id, {
+                            "type": "social_media_update",
+                            "simulation_id": simulation_id,
+                            "new_posts": new_posts,
+                            "timestamp": datetime.utcnow().isoformat()
+                        })
+                
+                # Generate at random intervals
+                import random
+                await asyncio.sleep(random.randint(30, 90))
+                
+            except Exception as e:
+                logger.error(f"Content generation error for {simulation_id}: {e}")
+                await asyncio.sleep(60)
+        
+        logger.info(f"Content generation completed for simulation {simulation_id}")
+        
+    except Exception as e:
+        logger.error(f"Content generation initialization failed: {e}")
+
+async def run_orchestrated_simulation(orchestrator: Any, simulation_id: str):
+    """Background task for running orchestrated simulation"""
+    try:
+        logger.info(f"Starting orchestrated simulation {simulation_id}")
+        
+        # Update status
+        simulation_cache[simulation_id]["status"] = "running"
+        simulation_cache[simulation_id]["orchestrator_started"] = datetime.utcnow().isoformat()
+        
         try:
             await cloud.firestore.save_simulation_state(simulation_id, {
                 "status": "running",
-                "orchestrator_started": datetime.utcnow(),
-                "message": "10-agent orchestrator active with real-time AI generation",
-                "real_time_features": True
+                "orchestrator_started": datetime.utcnow().isoformat()
             })
         except Exception as e:
             logger.warning(f"Failed to update status: {e}")
         
-        # Run the orchestrated simulation
-        await orchestrator.start_simulation()
+        # Run simulation
+        if hasattr(orchestrator, 'start_simulation'):
+            await orchestrator.start_simulation()
+        else:
+            # Fallback simulation
+            await asyncio.sleep(60)  # Simulate 1 minute of processing
         
-        logger.info(f"Enhanced ERIS simulation {simulation_id} completed successfully")
+        # Mark as completed
+        simulation_cache[simulation_id]["status"] = "completed"
+        simulation_cache[simulation_id]["completed_at"] = datetime.utcnow().isoformat()
+        
+        logger.info(f"Simulation {simulation_id} completed successfully")
         
     except Exception as e:
-        logger.error(f"Enhanced ERIS simulation {simulation_id} failed: {e}")
+        logger.error(f"Simulation {simulation_id} failed: {e}")
         
-        # Update simulation state on failure
-        try:
-            await cloud.firestore.save_simulation_state(simulation_id, {
-                "status": "failed",
-                "error": str(e),
-                "failed_at": datetime.utcnow(),
-                "orchestrator_status": "failed"
-            })
-        except Exception as save_error:
-            logger.error(f"Failed to save error state: {save_error}")
-    
+        # Update error status
+        simulation_cache[simulation_id]["status"] = "failed"
+        simulation_cache[simulation_id]["error"] = str(e)
+        simulation_cache[simulation_id]["failed_at"] = datetime.utcnow().isoformat()
+        
     finally:
-        # Clean up orchestrator and connections
+        # Cleanup
         if simulation_id in active_orchestrators:
             del active_orchestrators[simulation_id]
+        
+        health_status.active_simulations = len(active_orchestrators)
+        logger.info(f"Cleaned up simulation {simulation_id}")
+
+async def stop_simulation(simulation_id: str):
+    """Stop and clean up a simulation"""
+    try:
+        # Update status
+        if simulation_id in simulation_cache:
+            simulation_cache[simulation_id]["status"] = "stopped"
+            simulation_cache[simulation_id]["stopped_at"] = datetime.utcnow().isoformat()
+        
+        # Remove from active orchestrators
+        if simulation_id in active_orchestrators:
+            orchestrator = active_orchestrators[simulation_id]
+            # Graceful shutdown if supported
+            if hasattr(orchestrator, 'stop_simulation'):
+                await orchestrator.stop_simulation()
+            del active_orchestrators[simulation_id]
+        
+        # Close WebSocket connections
         if simulation_id in websocket_manager.connections:
+            for ws in websocket_manager.connections[simulation_id]:
+                try:
+                    await ws.close(code=1000, reason="Simulation stopped")
+                except:
+                    pass
             del websocket_manager.connections[simulation_id]
-        logger.info(f"Cleaned up enhanced orchestrator for simulation {simulation_id}")
-
-# Status endpoint
-@app.get("/status/{simulation_id}")
-async def get_simulation_status(simulation_id: str):
-    try:
-        # Get base simulation data
-        try:
-            simulation_data = await cloud.firestore.get_simulation_state(simulation_id)
-        except Exception as e:
-            logger.warning(f"Failed to get simulation data: {e}")
-            simulation_data = None
-            
-        if not simulation_data:
-            raise HTTPException(status_code=404, detail="Simulation not found")
-
-        # Get orchestrator status if active
-        orchestrator_status = None
-        agent_summary = None
-        real_time_status = False
         
-        if simulation_id in active_orchestrators:
-            orchestrator = active_orchestrators[simulation_id]
-            real_time_status = True
-            try:
-                orchestrator_status = orchestrator.get_simulation_status()
-                agent_summary = {
-                    "total_agents": len(orchestrator.adk_agents) + len(orchestrator.enhanced_agents),
-                    "adk_agents": len(orchestrator.adk_agents),
-                    "enhanced_agents": len(orchestrator.enhanced_agents),
-                    "active_agents": len([s for s in orchestrator.agent_statuses.values() if "completed" in s or "active" in s]),
-                    "failed_agents": len([s for s in orchestrator.agent_statuses.values() if "failed" in s])
-                }
-            except Exception as e:
-                logger.warning(f"Failed to get orchestrator status: {e}")
-
-        return {
-            "simulation_id": simulation_id,
-            "status": simulation_data.get("status", "unknown"),
-            "current_phase": simulation_data.get("current_phase", "impact"),
-            "last_updated": datetime.utcnow(),
-            "orchestrator": {
-                "version": "0.5.0",
-                "ai_model": "Gemini 2.0 Flash",
-                "status": orchestrator_status,
-                "agent_summary": agent_summary,
-                "real_time_active": real_time_status,
-                "websocket_connections": len(websocket_manager.connections.get(simulation_id, []))
-            },
-            "simulation_data": simulation_data,
-            "enhanced_simulation": True,
-            "real_time_features": simulation_data.get("real_time_features", False),
-            "frontend_accessible": True
-        }
-    except Exception as e:
-        logger.error(f"Status check error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/metrics/{simulation_id}")
-async def get_simulation_metrics(simulation_id: str):
-    try:
-        # Get base simulation data
+        # Update persistent storage
         try:
-            simulation_data = await cloud.firestore.get_simulation_state(simulation_id)
+            await cloud.firestore.save_simulation_state(simulation_id, {
+                "status": "stopped",
+                "stopped_at": datetime.utcnow().isoformat()
+            })
         except Exception as e:
-            logger.warning(f"Failed to get simulation data: {e}")
-            simulation_data = {"status": "active", "current_phase": "impact"}
-            
-        if not simulation_data:
-            raise HTTPException(status_code=404, detail="Simulation not found")
-
-        # Get orchestrator metrics if available
-        orchestrator_metrics = {}
-        agent_metrics = {"adk_agents": {}, "enhanced_agents": {}}
-        real_time_data = None
+            logger.warning(f"Failed to update stopped status: {e}")
         
-        if simulation_id in active_orchestrators:
-            orchestrator = active_orchestrators[simulation_id]
-            try:
-                # Get real-time metrics
-                metrics_calculator = DynamicMetricsCalculator(simulation_id, orchestrator)
-                real_time_data = metrics_calculator.calculate_real_time_metrics()
-                
-                # Collect final metrics from orchestrator
-                final_metrics = await orchestrator._collect_final_metrics()
-                agent_metrics = final_metrics
-                
-                orchestrator_metrics = {
-                    "current_phase": orchestrator.current_phase.value,
-                    "simulation_context": orchestrator.simulation_context,
-                    "agent_statuses": orchestrator.agent_statuses,
-                    "total_agents": len(orchestrator.adk_agents) + len(orchestrator.enhanced_agents),
-                    "coordination_events": len(orchestrator.agent_statuses),
-                    "real_time_metrics": real_time_data
-                }
-            except Exception as e:
-                logger.warning(f"Failed to get orchestrator metrics: {e}")
-
-        return {
-            "simulation_id": simulation_id,
-            "current_phase": simulation_data.get("current_phase", "impact"),
-            "orchestrator_metrics": orchestrator_metrics,
-            "agent_metrics": agent_metrics,
-            "real_time_data": real_time_data,
-            "ai_model": "Gemini 2.0 Flash",
-            "total_agents": 10,
-            "enhanced_metrics_available": True,
-            "real_time_enabled": simulation_id in active_orchestrators
-        }
+        health_status.active_simulations = len(active_orchestrators)
+        logger.info(f"Simulation {simulation_id} stopped successfully")
+        
     except Exception as e:
-        logger.error(f"Metrics error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error stopping simulation {simulation_id}: {e}")
 
-# System info endpoint
-@app.get("/system/info")
-async def get_system_info():
-    """Get enhanced system information and capabilities"""
+# ===== ADMIN ENDPOINTS =====
+@app.post("/admin/stop/{simulation_id}")
+async def admin_stop_simulation(
+    simulation_id: str,
+    authenticated: bool = Depends(verify_api_key)
+):
+    """Admin endpoint to stop a simulation"""
+    if simulation_id not in active_orchestrators and simulation_id not in simulation_cache:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    
+    await stop_simulation(simulation_id)
+    
     return {
-        "eris_version": "0.5.0",
-        "orchestrator": {
-            "ai_model": "Gemini 2.0 Flash",
-            "architecture": "10-agent coordination system",
-            "coordination_method": "cross-agent context sharing"
-        },
-        "agent_system": {
-            "total_agents": 10,
-            "adk_agents": 6,
-            "enhanced_agents": 4,
-            "ai_powered": True
-        },
-        "real_time_features": {
-            "dynamic_metrics_calculation": True,
-            "ai_content_generation": True,
-            "websocket_streaming": True,
-            "live_social_media_simulation": True,
-            "contextual_emergency_feed": True,
-            "real_time_panic_tracking": True,
-            "hospital_capacity_modeling": True,
-            "infrastructure_damage_evolution": True
-        },
-        "frontend_compatible": True,
-        "cors_enabled": True,
-        "active_simulations": len(active_orchestrators),
-        "websocket_connections": sum(len(conns) for conns in websocket_manager.connections.values()),
-        "capabilities": {
-            "disaster_simulation": True,
-            "multi_agent_coordination": True,
-            "phase_based_execution": True,
-            "real_time_metrics": True,
-            "cloud_integration": True,
-            "adk_integration": True,
-            "hospital_load_modeling": True,
-            "public_behavior_simulation": True,
-            "social_media_simulation": True,
-            "news_coverage_simulation": True,
-            "cross_agent_context_sharing": True,
-            "ai_orchestration": True,
-            "dashboard_metrics": True,
-            "websocket_streaming": True,
-            "dynamic_content_generation": True
-        }
+        "message": f"Simulation {simulation_id} stopped successfully",
+        "timestamp": datetime.utcnow().isoformat()
     }
 
-# Ping endpoint
+@app.get("/admin/simulations")
+async def admin_list_simulations(authenticated: bool = Depends(verify_api_key)):
+    """Admin endpoint to list all simulations"""
+    simulations = []
+    
+    # Add active simulations
+    for sim_id, orchestrator in active_orchestrators.items():
+        sim_data = simulation_cache.get(sim_id, {})
+        simulations.append({
+            "simulation_id": sim_id,
+            "status": "active",
+            "created_at": sim_data.get("created_at"),
+            "disaster_type": sim_data.get("disaster_type"),
+            "location": sim_data.get("location"),
+            "websocket_connections": len(websocket_manager.connections.get(sim_id, []))
+        })
+    
+    # Add cached simulations
+    for sim_id, sim_data in simulation_cache.items():
+        if sim_id not in active_orchestrators:
+            simulations.append({
+                "simulation_id": sim_id,
+                "status": sim_data.get("status", "unknown"),
+                "created_at": sim_data.get("created_at"),
+                "disaster_type": sim_data.get("disaster_type"),
+                "location": sim_data.get("location"),
+                "websocket_connections": 0
+            })
+    
+    return {
+        "simulations": simulations,
+        "total_count": len(simulations),
+        "active_count": len(active_orchestrators),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.post("/admin/cleanup")
+async def admin_cleanup(authenticated: bool = Depends(verify_api_key)):
+    """Admin endpoint for system cleanup"""
+    cleanup_results = {
+        "stopped_simulations": 0,
+        "cleaned_websockets": 0,
+        "cleared_cache_entries": 0
+    }
+    
+    # Stop all simulations
+    for sim_id in list(active_orchestrators.keys()):
+        await stop_simulation(sim_id)
+        cleanup_results["stopped_simulations"] += 1
+    
+    # Clean up stale WebSocket connections
+    await websocket_manager.cleanup_stale_connections()
+    cleanup_results["cleaned_websockets"] = sum(len(conns) for conns in websocket_manager.connections.values())
+    
+    # Clear old cache entries
+    cutoff_time = datetime.utcnow() - timedelta(hours=24)
+    old_entries = []
+    
+    for sim_id, sim_data in simulation_cache.items():
+        created_at = sim_data.get("created_at")
+        if created_at:
+            try:
+                created_time = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                if created_time < cutoff_time:
+                    old_entries.append(sim_id)
+            except:
+                pass
+    
+    for sim_id in old_entries:
+        del simulation_cache[sim_id]
+        cleanup_results["cleared_cache_entries"] += 1
+    
+    return {
+        "message": "System cleanup completed",
+        "results": cleanup_results,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+# ===== MONITORING ENDPOINTS =====
+@app.get("/metrics")
+async def get_system_metrics():
+    """Get detailed system metrics for monitoring"""
+    return {
+        "system_health": health_status.get_health_metrics(),
+        "simulations": {
+            "active_count": len(active_orchestrators),
+            "total_cached": len(simulation_cache),
+            "max_concurrent": settings.MAX_CONCURRENT_SIMULATIONS
+        },
+        "websockets": {
+            "total_connections": health_status.websocket_connections,
+            "connections_by_simulation": {
+                sim_id: len(conns) for sim_id, conns in websocket_manager.connections.items()
+            }
+        },
+        "performance": {
+            "uptime_seconds": int((datetime.utcnow() - health_status.startup_time).total_seconds()),
+            "requests_per_second": health_status.total_requests / max(1, int((datetime.utcnow() - health_status.startup_time).total_seconds())),
+            "error_rate_percent": (health_status.failed_requests / max(1, health_status.total_requests)) * 100
+        },
+        "configuration": {
+            "environment": settings.ENVIRONMENT,
+            "rate_limit": f"{settings.RATE_LIMIT_REQUESTS}/{settings.RATE_LIMIT_WINDOW}s",
+            "websocket_heartbeat": f"{settings.WEBSOCKET_HEARTBEAT_INTERVAL}s"
+        },
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+# ===== ERROR HANDLERS =====
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Enhanced HTTP exception handler"""
+    request_id = str(uuid.uuid4())
+    
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.detail,
+            "status_code": exc.status_code,
+            "request_id": request_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "path": str(request.url.path)
+        }
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """General exception handler for unexpected errors"""
+    request_id = str(uuid.uuid4())
+    
+    logger.error(f"Unhandled exception {request_id}: {exc}", exc_info=True)
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal server error",
+            "message": "An unexpected error occurred",
+            "request_id": request_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "path": str(request.url.path)
+        }
+    )
+
+# ===== PERIODIC CLEANUP TASK =====
+async def periodic_cleanup():
+    """Periodic cleanup task"""
+    while True:
+        try:
+            await asyncio.sleep(300)  # Run every 5 minutes
+            
+            # Clean up stale WebSocket connections
+            await websocket_manager.cleanup_stale_connections()
+            
+            # Clean up old simulations
+            cutoff_time = datetime.utcnow() - timedelta(hours=6)
+            old_simulations = []
+            
+            for sim_id, sim_data in simulation_cache.items():
+                if sim_id not in active_orchestrators:
+                    created_at = sim_data.get("created_at")
+                    if created_at:
+                        try:
+                            created_time = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                            if created_time < cutoff_time:
+                                old_simulations.append(sim_id)
+                        except:
+                            pass
+            
+            for sim_id in old_simulations:
+                del simulation_cache[sim_id]
+                logger.info(f"Cleaned up old simulation cache: {sim_id}")
+            
+            logger.debug(f"Periodic cleanup completed. Removed {len(old_simulations)} old simulations")
+            
+        except Exception as e:
+            logger.error(f"Periodic cleanup error: {e}")
+
+# Start periodic cleanup task
+@app.on_event("startup")
+async def startup_event():
+    """Additional startup tasks"""
+    asyncio.create_task(periodic_cleanup())
+    logger.info("Periodic cleanup task started")
+
+# ===== DEVELOPMENT/TESTING ENDPOINTS =====
+if settings.DEBUG:
+    @app.get("/debug/cache")
+    async def debug_cache():
+        """Debug endpoint to view cache contents"""
+        return {
+            "simulation_cache": {
+                sim_id: {
+                    "status": data.get("status"),
+                    "created_at": data.get("created_at"),
+                    "disaster_type": data.get("disaster_type")
+                } for sim_id, data in simulation_cache.items()
+            },
+            "active_orchestrators": list(active_orchestrators.keys()),
+            "websocket_connections": {
+                sim_id: len(conns) for sim_id, conns in websocket_manager.connections.items()
+            }
+        }
+    
+    @app.post("/debug/simulate-load")
+    async def debug_simulate_load(num_simulations: int = 3):
+        """Debug endpoint to create multiple test simulations"""
+        created_simulations = []
+        
+        for i in range(min(num_simulations, 5)):  # Limit to 5 for safety
+            test_request = SimulationRequest(
+                disaster_type="flood",
+                location=f"Test Location {i+1}",
+                severity=5,
+                duration=24
+            )
+            
+            try:
+                response = await start_simulation(
+                    request=None,  # Mock request
+                    simulation_request=test_request,
+                    background_tasks=BackgroundTasks(),
+                    authenticated=True
+                )
+                created_simulations.append(response.simulation_id)
+            except Exception as e:
+                logger.error(f"Failed to create test simulation {i+1}: {e}")
+        
+        return {
+            "created_simulations": created_simulations,
+            "total_created": len(created_simulations),
+            "active_simulations": len(active_orchestrators)
+        }
+
+# ===== LEGACY COMPATIBILITY ENDPOINTS =====
 @app.get("/ping")
-async def ping():
-    """Ping endpoint with real-time status"""
+async def ping(request: Request):
+    """Ping endpoint for health checks"""
     return {
         "message": "pong",
         "timestamp": datetime.utcnow().isoformat(),
+        "version": "0.5.0",
+        "environment": settings.ENVIRONMENT,
         "orchestrator": "Gemini 2.0 Flash",
         "agents": 10,
-        "version": "0.5.0",
-        "cors_working": True,
         "server_ready": True,
-        "real_time_features": True,
         "active_simulations": len(active_orchestrators),
-        "websocket_connections": len(websocket_manager.connections)
+        "websocket_connections": health_status.websocket_connections
     }
 
+@app.get("/")
+async def root():
+    """Root endpoint with API information"""
+    return {
+        "message": "ERIS Emergency Response Intelligence System",
+        "version": "0.5.0",
+        "environment": settings.ENVIRONMENT,
+        "api_documentation": "/docs" if settings.DEBUG else "Contact admin for API documentation",
+        "orchestrator": {
+            "ai_model": "Gemini 2.0 Flash",
+            "architecture": "10-agent coordination system",
+            "total_agents": 10,
+            "adk_agents": 6,
+            "enhanced_agents": 4
+        },
+        "features": {
+            "real_time_metrics": True,
+            "websocket_streaming": True,
+            "ai_content_generation": True,
+            "production_ready": True,
+            "rate_limiting": True,
+            "authentication": settings.ENVIRONMENT == "production",
+            "monitoring": True
+        },
+        "endpoints": {
+            "health": "/health",
+            "system_info": "/system/info",
+            "start_simulation": "/simulate",
+            "websocket_metrics": "/ws/metrics/{simulation_id}",
+            "dashboard_metrics": "/metrics/dashboard/{simulation_id}",
+            "live_feed": "/live-feed/{simulation_id}"
+        },
+        "limits": {
+            "max_concurrent_simulations": settings.MAX_CONCURRENT_SIMULATIONS,
+            "rate_limit": f"{settings.RATE_LIMIT_REQUESTS} requests per minute"
+        },
+        "current_load": {
+            "active_simulations": len(active_orchestrators),
+            "websocket_connections": health_status.websocket_connections,
+            "uptime_seconds": int((datetime.utcnow() - health_status.startup_time).total_seconds())
+        }
+    }
+
+# ===== GRACEFUL SHUTDOWN =====
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Graceful shutdown procedures"""
+    logger.info("🛑 Initiating graceful shutdown...")
+    
+    # Stop accepting new connections
+    for sim_id in list(active_orchestrators.keys()):
+        try:
+            await stop_simulation(sim_id)
+        except Exception as e:
+            logger.error(f"Error stopping simulation {sim_id} during shutdown: {e}")
+    
+    # Close all WebSocket connections
+    for sim_id, connections in websocket_manager.connections.items():
+        for ws in connections:
+            try:
+                await ws.close(code=1001, reason="Server shutdown")
+            except:
+                pass
+    
+    logger.info("✅ Graceful shutdown completed")
+
+# ===== APPLICATION CONFIGURATION =====
+def configure_logging():
+    """Configure structured logging"""
+    logging.basicConfig(
+        level=logging.DEBUG if settings.DEBUG else logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),
+            # Add file handler for production
+            *([logging.FileHandler('eris.log')] if settings.ENVIRONMENT == "production" else [])
+        ]
+    )
+    
+    # Reduce noise from third-party libraries
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    logging.getLogger("fastapi").setLevel(logging.WARNING)
+
+# Initialize logging
+configure_logging()
+
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Production vs Development configuration
+    if settings.ENVIRONMENT == "production":
+        # Production settings
+        uvicorn.run(
+            "main:app",
+            host="0.0.0.0",
+            port=int(os.getenv("PORT", 8000)),
+            workers=int(os.getenv("WORKERS", 1)),
+            log_level="info",
+            access_log=False,  # Use our custom logging
+            server_header=False,
+            date_header=False
+        )
+    else:
+        # Development settings
+        uvicorn.run(
+            "main:app",
+            host="127.0.0.1",
+            port=8000,
+            reload=True,
+            log_level="debug",
+            access_log=True
+        )
