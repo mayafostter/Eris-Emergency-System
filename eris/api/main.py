@@ -21,7 +21,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, validator
 import uvicorn
 
-# Security headers - Use Starlette directly (FastAPI is built on Starlette)
+# Security headers - Use Starlette directly
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Optional imports with fallbacks
@@ -71,10 +71,12 @@ ERIS_IMPORTS_AVAILABLE = False
 try:
     from services import get_cloud_services
     from utils.time_utils import SimulationTimeManager, SimulationPhase
-    from config import ERISConfig
+    from config import ERISConfig, get_disaster_config
     from orchestrator.orchestrator import ERISOrchestrator
     from services.metrics_collector import ERISMetricsCollector
     ERIS_IMPORTS_AVAILABLE = True
+    logger = logging.getLogger(__name__)
+    logger.info("✅ All ERIS imports successful")
 except ImportError as e:
     logging.warning(f"ERIS imports failed: {e}. Using fallback mode.")
     # Create fallback classes
@@ -82,6 +84,9 @@ except ImportError as e:
         IMPACT = "impact"
         RESPONSE = "response"
         RECOVERY = "recovery"
+    
+    def get_disaster_config(disaster_type: str) -> Dict[str, Any]:
+        return {"severity_multiplier": 1.0, "duration": 24}
 
 # Setup logging with structured format
 logging.basicConfig(
@@ -90,7 +95,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ===== CONFIGURATION & ENVIRONMENT =====
+# === CONFIGURATION & ENVIRONMENT ===
 class Settings:
     def __init__(self):
         self.API_KEYS = os.getenv("ERIS_API_KEYS", "dev-key-12345,prod-key-67890").split(",")
@@ -124,7 +129,7 @@ class Settings:
 
 settings = Settings()
 
-# ===== SECURITY MIDDLEWARE =====
+# === SECURITY MIDDLEWARE ===
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security headers to all responses"""
     async def dispatch(self, request: Request, call_next):
@@ -144,14 +149,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         
         return response
 
-# ===== RATE LIMITING =====
+# === RATE LIMITING ===
 if SLOWAPI_AVAILABLE:
     limiter = Limiter(key_func=get_remote_address)
 else:
     limiter = MockLimiter()
     logging.warning("Rate limiting disabled - slowapi not available")
 
-# ===== AUTHENTICATION =====
+# === AUTHENTICATION ===
 security = HTTPBearer(auto_error=False)
 
 async def verify_api_key(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
@@ -175,7 +180,7 @@ async def verify_api_key(credentials: Optional[HTTPAuthorizationCredentials] = D
     
     return True
 
-# ===== HEALTH CHECK & MONITORING =====
+# === HEALTH CHECK & MONITORING ===
 class HealthStatus:
     def __init__(self):
         self.startup_time = datetime.utcnow()
@@ -219,7 +224,7 @@ class HealthStatus:
 
 health_status = HealthStatus()
 
-# ===== INITIALIZATION =====
+# === INITIALIZATION ===
 async def initialize_services():
     """Initialize ERIS services with fallback handling"""
     global config, cloud
@@ -296,7 +301,7 @@ async def cleanup_resources():
     except Exception as e:
         logger.error(f"Error during cleanup: {e}")
 
-# ===== CREATE FASTAPI APP =====
+# === CREATE FASTAPI APP ===
 app = FastAPI(
     title="ERIS Emergency Response Intelligence System",
     version="0.5.0",
@@ -306,7 +311,7 @@ app = FastAPI(
     redoc_url="/redoc" if settings.DEBUG else None
 )
 
-# ===== MIDDLEWARE SETUP =====
+# === MIDDLEWARE SETUP ===
 # Security headers
 app.add_middleware(SecurityHeadersMiddleware)
 
@@ -333,7 +338,7 @@ if SLOWAPI_AVAILABLE:
 else:
     logger.warning("Rate limiting not available - slowapi not installed")
 
-# ===== REQUEST MIDDLEWARE =====
+# === REQUEST MIDDLEWARE ===
 @app.middleware("http")
 async def request_middleware(request: Request, call_next):
     """Request processing middleware"""
@@ -359,11 +364,11 @@ async def request_middleware(request: Request, call_next):
             content={"error": "Internal server error", "request_id": str(uuid.uuid4())}
         )
 
-# ===== GLOBAL STORAGE =====
+# === GLOBAL STORAGE ===
 active_orchestrators: Dict[str, Any] = {}
 simulation_cache: Dict[str, Dict] = {}
 
-# ===== PYDANTIC MODELS =====
+# === PYDANTIC MODELS ===
 class SimulationRequest(BaseModel):
     disaster_type: str
     location: str
@@ -399,7 +404,7 @@ class ErrorResponse(BaseModel):
     request_id: str
     timestamp: str
 
-# ===== WEBSOCKET MANAGER =====
+# === WEBSOCKET MANAGER ===
 class WebSocketManager:
     def __init__(self):
         self.connections: Dict[str, List[WebSocket]] = {}
@@ -592,7 +597,6 @@ class DynamicMetricsCalculator:
         }
 
 # ===== CORE ENDPOINTS =====
-
 @app.get("/health")
 async def health_check(request: Request):
     """Enhanced health check with detailed metrics"""
@@ -746,6 +750,7 @@ async def start_simulation(
             logger.warning(f"Failed to persist simulation data: {e}")
         
         # Create orchestrator if ERIS imports are available
+        orchestrator_created = False
         if ERIS_IMPORTS_AVAILABLE:
             try:
                 orchestrator = ERISOrchestrator(
@@ -755,16 +760,40 @@ async def start_simulation(
                     severity=simulation_request.severity,
                     duration=simulation_request.duration
                 )
+                
                 active_orchestrators[simulation_id] = orchestrator
+                orchestrator_created = True
+                
+                # Update simulation data
+                simulation_data.update({
+                    "status": "running",
+                    "orchestrator_active": True,
+                    "orchestrator_version": "0.5.0",
+                    "total_agents": 10
+                })
                 
                 # Start orchestration in background
                 background_tasks.add_task(run_orchestrated_simulation, orchestrator, simulation_id)
                 
+                logger.info(f"✅ Orchestrator created and stored for simulation {simulation_id}")
+                
             except Exception as e:
-                logger.error(f"Failed to create orchestrator: {e}")
+                logger.error(f"❌ Failed to create orchestrator: {e}")
                 # Continue with basic simulation
+                simulation_data.update({
+                    "orchestrator_active": False,
+                    "orchestrator_error": str(e),
+                    "status": "running_fallback"
+                })
         else:
-            logger.info("ERIS orchestrator not available - using basic simulation mode")
+            logger.info("⚠️ ERIS orchestrator not available - using basic simulation mode")
+            simulation_data.update({
+                "orchestrator_active": False,
+                "status": "running_basic"
+            })
+
+        # Store in cache for immediate access
+        simulation_cache[simulation_id] = simulation_data
         
         # Start supporting services
         background_tasks.add_task(start_metrics_streaming, simulation_id)
@@ -1457,7 +1486,7 @@ async def admin_cleanup(authenticated: bool = Depends(verify_api_key)):
         "timestamp": datetime.utcnow().isoformat()
     }
 
-# ===== MONITORING ENDPOINTS =====
+# === MONITORING ENDPOINTS ===
 @app.get("/metrics")
 async def get_system_metrics():
     """Get detailed system metrics for monitoring"""
@@ -1487,7 +1516,7 @@ async def get_system_metrics():
         "timestamp": datetime.utcnow().isoformat()
     }
 
-# ===== ERROR HANDLERS =====
+# === ERROR HANDLERS ===
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     """Enhanced HTTP exception handler"""
@@ -1612,7 +1641,154 @@ if settings.DEBUG:
             "active_simulations": len(active_orchestrators)
         }
 
-# ===== LEGACY COMPATIBILITY ENDPOINTS =====
+# === ORCHESTRATOR ENDPOINTS ===
+
+@app.get("/orchestrator/{simulation_id}/status")
+async def get_orchestrator_status(simulation_id: str):
+    """Get orchestrator-specific status"""
+    
+    orchestrator = active_orchestrators.get(simulation_id)
+    
+    if not orchestrator:
+        simulation_data = simulation_cache.get(simulation_id)
+        
+        if not simulation_data:
+            try:
+                simulation_data = await cloud.firestore.get_simulation_state(simulation_id)
+                if simulation_data:
+                    simulation_cache[simulation_id] = simulation_data
+            except Exception as e:
+                logger.warning(f"Failed to retrieve simulation: {e}")
+        
+        if simulation_data:
+            return {
+                "simulation_id": simulation_id,
+                "orchestrator_active": False,
+                "simulation_exists": True,
+                "simulation_status": simulation_data.get("status", "unknown"),
+                "error": "Orchestrator not running for this simulation",
+                "fallback_mode": True,
+                "message": "Simulation exists but orchestrator is not active. Basic simulation mode."
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Simulation not found")
+    
+    try:
+        orchestrator_status = orchestrator.get_simulation_status()
+        agent_info = orchestrator.get_all_agent_info()
+        performance = orchestrator.get_performance_report()
+        
+        return {
+            "simulation_id": simulation_id,
+            "orchestrator_active": True,
+            "status": orchestrator_status,
+            "agent_info": agent_info,
+            "performance": performance,
+            "fallback_mode": False,
+            "real_time_metrics": orchestrator.get_real_time_metrics(),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting orchestrator status: {e}")
+        return {
+            "simulation_id": simulation_id,
+            "orchestrator_active": True,
+            "error": str(e),
+            "fallback_mode": True,
+            "message": "Orchestrator active but status retrieval failed"
+        }
+
+@app.get("/orchestrator/{simulation_id}/metrics")
+async def get_orchestrator_metrics(simulation_id: str):
+    """Get real-time orchestrator metrics"""
+    
+    orchestrator = active_orchestrators.get(simulation_id)
+    
+    if not orchestrator:
+        simulation_data = simulation_cache.get(simulation_id)
+        if not simulation_data:
+            try:
+                simulation_data = await cloud.firestore.get_simulation_state(simulation_id)
+            except Exception:
+                pass
+        
+        if not simulation_data:
+            raise HTTPException(status_code=404, detail="Simulation not found")
+        
+        metrics_calculator = DynamicMetricsCalculator(simulation_id, None)
+        fallback_metrics = metrics_calculator.calculate_real_time_metrics()
+        
+        return {
+            "simulation_id": simulation_id,
+            "orchestrator_active": False,
+            "real_time_metrics": fallback_metrics,
+            "metrics_history": [],
+            "fallback_mode": True,
+            "message": "Using fallback metrics - orchestrator not active",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    
+    try:
+        return {
+            "simulation_id": simulation_id,
+            "orchestrator_active": True,
+            "real_time_metrics": orchestrator.get_real_time_metrics(),
+            "metrics_history": orchestrator.get_metrics_history(limit=50),
+            "fallback_mode": False,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting orchestrator metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/simulations")
+async def list_all_simulations():
+    """List all simulations (active and cached)"""
+    simulations = []
+    
+    for sim_id, orchestrator in active_orchestrators.items():
+        sim_data = simulation_cache.get(sim_id, {})
+        try:
+            status_info = orchestrator.get_simulation_status() if hasattr(orchestrator, 'get_simulation_status') else {}
+        except Exception:
+            status_info = {}
+            
+        simulations.append({
+            "simulation_id": sim_id,
+            "status": "active",
+            "orchestrator_active": True,
+            "created_at": sim_data.get("created_at"),
+            "disaster_type": sim_data.get("disaster_type"),
+            "location": sim_data.get("location"),
+            "websocket_connections": len(websocket_manager.connections.get(sim_id, [])),
+            "current_phase": status_info.get("current_phase", "unknown")
+        })
+    
+    for sim_id, sim_data in simulation_cache.items():
+        if sim_id not in active_orchestrators:
+            simulations.append({
+                "simulation_id": sim_id,
+                "status": sim_data.get("status", "unknown"),
+                "orchestrator_active": False,
+                "created_at": sim_data.get("created_at"),
+                "disaster_type": sim_data.get("disaster_type"),
+                "location": sim_data.get("location"),
+                "websocket_connections": 0,
+                "completed_at": sim_data.get("completed_at"),
+                "error": sim_data.get("error")
+            })
+    
+    return {
+        "simulations": simulations,
+        "total_count": len(simulations),
+        "active_count": len(active_orchestrators),
+        "cached_count": len(simulation_cache),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+# === LEGACY COMPATIBILITY ENDPOINTS ===
 @app.get("/ping")
 async def ping(request: Request):
     """Ping endpoint for health checks"""
