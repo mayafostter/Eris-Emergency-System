@@ -971,8 +971,8 @@ async def get_dashboard_metrics(request: Request, simulation_id: str):
 @app.get("/orchestrator/{simulation_id}/agents")
 async def get_agents_info(request: Request, simulation_id: str):
     """Get detailed agent information and status"""
-    if simulation_id not in active_orchestrators:
-        raise HTTPException(status_code=404, detail="Active simulation not found")
+    if simulation_id not in active_orchestrators and simulation_id not in simulation_cache:
+      raise HTTPException(status_code=404, detail="Simulation not found")
     
     try:
         orchestrator = active_orchestrators[simulation_id]
