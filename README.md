@@ -25,7 +25,7 @@ ERIS is a sophisticated emergency response intelligence system that leverages 10
    - **Disaster Type**: Flood
    - **Location**: Phuket, Thailand
    - **Severity**: 7
-   - **Duration**: 4 hours (PLEASE PUT 24 here)
+   - **Duration**: 4 hours (PUT 24 here)
 3. Click **"Start Simulation"** to launch the 10-agent orchestrator
 
 **Web Dashboard Features:**
