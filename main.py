@@ -98,7 +98,7 @@ DISASTER_TYPES = [
 console = Console()
 
 class APIException(Exception):
-    """Enhanced API exception with detailed error info"""
+    """API exception with detailed error info"""
     def __init__(self, message: str, status_code: int = None, response_data: Dict = None):
         super().__init__(message)
         self.status_code = status_code
@@ -106,7 +106,7 @@ class APIException(Exception):
         self.timestamp = datetime.utcnow()
 
 class RetryManager:
-    """Enhanced retry manager with exponential backoff"""
+    """Retry manager with exponential backoff"""
     
     @staticmethod
     async def retry_with_backoff(
@@ -136,7 +136,7 @@ class RetryManager:
         raise APIException(f"All {max_retries + 1} attempts failed: {str(last_exception)}")
 
 class ERISAPIClient:
-    """Enhanced ERIS API client for v0.5.0"""
+    """ERIS API client for v0.5.0"""
     
     def __init__(self, config: ERISConfig):
         self.config = config
@@ -153,7 +153,7 @@ class ERISAPIClient:
         self.system_info = None
     
     async def __aenter__(self):
-        """Enhanced context manager entry"""
+        """Context manager entry"""
         timeout = aiohttp.ClientTimeout(total=self.config.timeout)
         connector = aiohttp.TCPConnector(
             limit=self._connection_pool_size,
@@ -180,11 +180,11 @@ class ERISAPIClient:
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Enhanced context manager exit"""
+        """Context manager exit"""
         if self.session:
             await self.session.close()
         
-        # Log enhanced session statistics
+        # Log session statistics
         session_duration = (datetime.utcnow() - self.start_time).total_seconds()
         avg_response_time = sum(self.response_times) / len(self.response_times) if self.response_times else 0
         
@@ -193,7 +193,7 @@ class ERISAPIClient:
                    f"{avg_response_time:.3f}s avg response time")
     
     async def _make_request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
-        """Enhanced request method with comprehensive error handling"""
+        """Request method with comprehensive error handling"""
         if not self.session:
             raise APIException("API client not initialized")
         
@@ -242,7 +242,7 @@ class ERISAPIClient:
         )
     
     async def health_check(self) -> Dict[str, Any]:
-        """Enhanced health check with system capabilities"""
+        """Health check with system capabilities"""
         if (self.last_health_check and 
             (datetime.utcnow() - self.last_health_check).total_seconds() < 30):
             return {"status": self.health_status, "cached": True}
@@ -258,14 +258,14 @@ class ERISAPIClient:
             raise
     
     async def get_system_info(self) -> Dict[str, Any]:
-        """Get enhanced system information"""
+        """Get system information"""
         result = await self._make_request('GET', '/system/info')
         self.system_info = result
         return result
     
     async def start_simulation(self, disaster_type: str, location: str, 
                              severity: int, duration: int = 24) -> Dict[str, Any]:
-        """Start enhanced simulation with validation"""
+        """Start simulation with validation"""
         if disaster_type not in DISASTER_TYPES:
             raise ValueError(f"Invalid disaster type: {disaster_type}")
         
@@ -286,18 +286,18 @@ class ERISAPIClient:
         return await self._make_request('POST', '/simulate', json=payload)
     
     async def get_simulation_status(self, simulation_id: str) -> Dict[str, Any]:
-        """Get enhanced simulation status"""
+        """Get simulation status"""
         if not simulation_id:
             raise ValueError("Simulation ID is required")
         
         return await self._make_request('GET', f'/status/{simulation_id}')
     
     async def get_agents_info(self, simulation_id: str) -> Dict[str, Any]:
-        """Get enhanced 10-agent information"""
+        """Get 10-agent information"""
         return await self._make_request('GET', f'/orchestrator/{simulation_id}/agents')
     
     async def get_dashboard_metrics(self, simulation_id: str) -> Dict[str, Any]:
-        """Get enhanced real-time dashboard metrics"""
+        """Get real-time dashboard metrics"""
         return await self._make_request('GET', f'/metrics/dashboard/{simulation_id}')
     
     async def get_orchestrator_status(self, simulation_id: str) -> Dict[str, Any]:
@@ -309,7 +309,7 @@ class ERISAPIClient:
         return await self._make_request('GET', f'/orchestrator/{simulation_id}/metrics')
     
     async def get_live_feed(self, simulation_id: str, limit: int = 20) -> Dict[str, Any]:
-        """Get enhanced live emergency feed"""
+        """Get live emergency feed"""
         return await self._make_request('GET', f'/live-feed/{simulation_id}?limit={limit}')
     
     async def list_simulations(self) -> Dict[str, Any]:
@@ -321,7 +321,7 @@ class ERISAPIClient:
         return f"{config.websocket_url}/ws/metrics/{simulation_id}"
     
     def get_performance_stats(self) -> Dict[str, Any]:
-        """Get enhanced client performance statistics"""
+        """Get client performance statistics"""
         avg_response_time = sum(self.response_times) / len(self.response_times) if self.response_times else 0
         session_duration = (datetime.utcnow() - self.start_time).total_seconds()
         
@@ -337,7 +337,7 @@ class ERISAPIClient:
         }
 
 class ERISWebSocketMonitor:
-    """Enhanced WebSocket monitoring for real-time updates"""
+    """WebSocket monitoring for real-time updates"""
     
     def __init__(self, simulation_id: str, config: ERISConfig):
         self.simulation_id = simulation_id
@@ -348,7 +348,7 @@ class ERISWebSocketMonitor:
         self.message_count = 0
         
     async def connect(self):
-        """Connect to WebSocket with enhanced error handling"""
+        """Connect to WebSocket with error handling"""
         ws_url = f"{config.websocket_url}/ws/metrics/{self.simulation_id}"
         
         try:
@@ -366,7 +366,7 @@ class ERISWebSocketMonitor:
             return False
     
     async def listen(self, callback):
-        """Listen for messages with enhanced handling"""
+        """Listen for messages with handling"""
         if not self.websocket:
             return
         
@@ -400,7 +400,7 @@ class ERISWebSocketMonitor:
             self.is_connected = False
 
 class ERISCLIApplication:
-    """Enhanced CLI application for ERIS v0.5.0"""
+    """CLI application for ERIS v0.5.0"""
     
     def __init__(self, config: ERISConfig):
         self.config = config
@@ -418,7 +418,7 @@ class ERISCLIApplication:
         console.print("\n[yellow]⚠️  Interrupt received, cleaning up...[/yellow]")
     
     async def display_system_status(self):
-        """Enhanced system status display for v0.5.0"""
+        """System status display for v0.5.0"""
         async with self.client:
             try:
                 with Status("🔍 Checking ERIS v0.5.0 system status...", console=console):
@@ -431,7 +431,7 @@ class ERISCLIApplication:
                         health_task, info_task, simulations_task
                     )
                 
-                # Display enhanced system status
+                # Display system status
                 self._display_enhanced_system_status(health, system_info, simulations)
                 self._display_performance_stats()
                 
@@ -507,7 +507,7 @@ class ERISCLIApplication:
         console.print(f"\n[bold green]✅ ERIS v{version} - Enhanced orchestrator with {ai_model} - All systems operational[/bold green]")
     
     def _display_performance_stats(self):
-        """Display enhanced client performance statistics"""
+        """Display client performance statistics"""
         stats = self.client.get_performance_stats()
         
         perf_table = Table(title="📈 Enhanced Client Performance", show_header=True)
