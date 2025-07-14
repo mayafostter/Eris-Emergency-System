@@ -1,5 +1,5 @@
 """
-ERIS Metrics Collection & Dashboard Output Module - Integrated with existing ERIS architecture
+ERIS Metrics Collection & Dashboard Output Module
 Aggregates data across all agents and generates real-time metrics for dashboard integration
 """
 
