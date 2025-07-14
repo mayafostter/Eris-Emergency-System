@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Union
 from contextlib import asynccontextmanager
 
+# FastAPI imports
 from fastapi import FastAPI, HTTPException, status, BackgroundTasks, WebSocket, WebSocketDisconnect, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -21,10 +22,10 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, validator
 import uvicorn
 
-# Security headers - Use Starlette directly
+# Security and middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
-# Optional imports with fallbacks
+# ===== OPTIONAL IMPORTS WITH FALLBACKS =====
 SLOWAPI_AVAILABLE = False
 PSUTIL_AVAILABLE = False
 TRUSTEDHOST_AVAILABLE = False
@@ -36,7 +37,6 @@ try:
     from slowapi.errors import RateLimitExceeded
     SLOWAPI_AVAILABLE = True
 except ImportError:
-    # Fallback rate limiter
     class MockLimiter:
         def limit(self, rate_limit):
             def decorator(func):
@@ -66,7 +66,7 @@ try:
 except ImportError:
     pass
 
-# ERIS imports with fallback
+# ===== ERIS CORE IMPORTS =====
 ERIS_IMPORTS_AVAILABLE = False
 try:
     from services import get_cloud_services
@@ -79,7 +79,7 @@ try:
     logger.info("✅ All ERIS imports successful")
 except ImportError as e:
     logging.warning(f"ERIS imports failed: {e}. Using fallback mode.")
-    # Create fallback classes
+    
     class SimulationPhase:
         IMPACT = "impact"
         RESPONSE = "response"
@@ -88,22 +88,63 @@ except ImportError as e:
     def get_disaster_config(disaster_type: str) -> Dict[str, Any]:
         return {"severity_multiplier": 1.0, "duration": 24}
 
-# Setup logging with structured format
+# ===== PRODUCTION CONFIGURATION IMPORTS =====
+PRODUCTION_CONFIG_AVAILABLE = False
+try:
+    from config.production_settings import (
+        apply_production_settings, 
+        get_production_config,
+        validate_production_environment
+    )
+    from services.government_data_service import GovernmentDataService
+    PRODUCTION_CONFIG_AVAILABLE = True
+    logger = logging.getLogger(__name__)
+    logger.info("✅ Production configuration loaded")
+except ImportError as e:
+    PRODUCTION_CONFIG_AVAILABLE = False
+    logging.warning(f"⚠️ Production configuration not available: {e}")
+
+# ===== LOGGING CONFIGURATION =====
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# === CONFIGURATION & ENVIRONMENT ===
+# ===== SETTINGS CLASS =====
 class Settings:
     def __init__(self):
+        # Load production config if available
+        self.production_config = None
+        if PRODUCTION_CONFIG_AVAILABLE and os.getenv("ENVIRONMENT") == "production":
+            try:
+                self.production_config = get_production_config()
+                validation = validate_production_environment()
+                if not validation["valid"]:
+                    logger.error(f"Production validation failed: {validation['errors']}")
+                    if validation["warnings"]:
+                        logger.warning(f"Production warnings: {validation['warnings']}")
+                else:
+                    logger.info("✅ Production environment validated")
+            except Exception as e:
+                logger.error(f"Failed to load production config: {e}")
+        
+        # Core settings
         self.API_KEYS = os.getenv("ERIS_API_KEYS", "dev-key-12345,prod-key-67890").split(",")
         self.ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
-        self.DEBUG = os.getenv("DEBUG", "true").lower() == "true"  # Default to true for local development
-        self.MAX_CONCURRENT_SIMULATIONS = int(os.getenv("MAX_CONCURRENT_SIMULATIONS", "10"))
+        self.DEBUG = os.getenv("DEBUG", "true").lower() == "true"
+        
+        # Production overrides
+        if self.production_config:
+            self.MAX_CONCURRENT_SIMULATIONS = self.production_config.production_overrides.get(
+                "max_concurrent_simulations", int(os.getenv("MAX_CONCURRENT_SIMULATIONS", "10"))
+            )
+            self.RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_PER_MINUTE", "1000"))
+        else:
+            self.MAX_CONCURRENT_SIMULATIONS = int(os.getenv("MAX_CONCURRENT_SIMULATIONS", "10"))
+            self.RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "100"))
+        
         self.WEBSOCKET_HEARTBEAT_INTERVAL = int(os.getenv("WEBSOCKET_HEARTBEAT_INTERVAL", "30"))
-        self.RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "100"))
         self.RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "60"))
         self.ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
         self.CORS_ORIGINS = self._get_cors_origins()
@@ -111,6 +152,9 @@ class Settings:
     def _get_cors_origins(self):
         """Get CORS origins based on environment"""
         if self.ENVIRONMENT == "production":
+            cors_env = os.getenv("CORS_ALLOWED_ORIGINS", "")
+            if cors_env:
+                return cors_env.split(",")
             return [
                 "https://eris-emergency-system.vercel.app",
                 "https://eris-emergency-system-*.vercel.app",
@@ -129,7 +173,7 @@ class Settings:
 
 settings = Settings()
 
-# === SECURITY MIDDLEWARE ===
+# ===== SECURITY MIDDLEWARE =====
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security headers to all responses"""
     async def dispatch(self, request: Request, call_next):
@@ -144,19 +188,20 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
         
         # Custom ERIS headers
-        response.headers["X-ERIS-Version"] = "0.5.0"
+        response.headers["X-ERIS-Version"] = "1.0.0"
         response.headers["X-ERIS-Environment"] = settings.ENVIRONMENT
+        response.headers["X-ERIS-Features"] = "production,government-data,real-time"
         
         return response
 
-# === RATE LIMITING ===
+# ===== RATE LIMITING =====
 if SLOWAPI_AVAILABLE:
     limiter = Limiter(key_func=get_remote_address)
 else:
     limiter = MockLimiter()
     logging.warning("Rate limiting disabled - slowapi not available")
 
-# === AUTHENTICATION ===
+# ===== AUTHENTICATION =====
 security = HTTPBearer(auto_error=False)
 
 async def verify_api_key(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
@@ -180,7 +225,7 @@ async def verify_api_key(credentials: Optional[HTTPAuthorizationCredentials] = D
     
     return True
 
-# === HEALTH CHECK & MONITORING ===
+# ===== HEALTH MONITORING =====
 class HealthStatus:
     def __init__(self):
         self.startup_time = datetime.utcnow()
@@ -224,15 +269,30 @@ class HealthStatus:
 
 health_status = HealthStatus()
 
-# === INITIALIZATION ===
+# ===== SERVICE INITIALIZATION =====
 async def initialize_services():
-    """Initialize ERIS services with fallback handling"""
-    global config, cloud
+    """Initialize ERIS services with production configuration and government data"""
+    global config, cloud, government_data_service
     
     try:
         if ERIS_IMPORTS_AVAILABLE:
             config = ERISConfig()
+            
+            # Apply production overrides if in production
+            if PRODUCTION_CONFIG_AVAILABLE and settings.ENVIRONMENT == "production":
+                prod_config = apply_production_settings(config)
+                logger.info("✅ Production configuration applied to ERIS")
+            
             cloud = get_cloud_services()
+            
+            # Initialize government data service
+            if PRODUCTION_CONFIG_AVAILABLE:
+                government_data_service = GovernmentDataService()
+                logger.info("✅ Government data service initialized")
+            else:
+                government_data_service = None
+                logger.warning("⚠️ Government data service not available")
+            
             logger.info("✅ ERIS services initialized successfully")
         else:
             # Fallback configuration
@@ -258,26 +318,12 @@ async def initialize_services():
                     ]
                 })()
             })()
+            government_data_service = None
             logger.warning("⚠️ Using fallback services - limited functionality available")
             
     except Exception as e:
         logger.error(f"❌ Service initialization failed: {e}")
         raise
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan manager"""
-    # Startup
-    logger.info("🚀 Starting ERIS FastAPI server...")
-    await initialize_services()
-    logger.info("✅ ERIS server started successfully")
-    
-    yield
-    
-    # Shutdown
-    logger.info("🛑 Shutting down ERIS server...")
-    await cleanup_resources()
-    logger.info("✅ ERIS server shutdown complete")
 
 async def cleanup_resources():
     """Clean up active resources"""
@@ -297,29 +343,50 @@ async def cleanup_resources():
                 except:
                     pass
         
+        # Close government data service
+        if government_data_service:
+            try:
+                if hasattr(government_data_service, 'session') and government_data_service.session:
+                    await government_data_service.session.close()
+            except Exception as e:
+                logger.error(f"Error closing government data service: {e}")
+        
         logger.info("🧹 Resource cleanup completed")
     except Exception as e:
         logger.error(f"Error during cleanup: {e}")
 
-# === CREATE FASTAPI APP ===
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager"""
+    # Startup
+    logger.info("🚀 Starting ERIS FastAPI server...")
+    await initialize_services()
+    logger.info("✅ ERIS server started successfully")
+    
+    yield
+    
+    # Shutdown
+    logger.info("🛑 Shutting down ERIS server...")
+    await cleanup_resources()
+    logger.info("✅ ERIS server shutdown complete")
+
+# ===== FASTAPI APP CREATION =====
 app = FastAPI(
     title="ERIS Emergency Response Intelligence System",
-    version="0.5.0",
-    description="Production-ready disaster simulation platform with 10 AI agents",
+    version="1.0.0",
+    description="Production-ready disaster simulation platform with 10 AI agents and real government data integration",
     lifespan=lifespan,
     docs_url="/docs" if settings.DEBUG else None,
     redoc_url="/redoc" if settings.DEBUG else None
 )
 
-# === MIDDLEWARE SETUP ===
+# ===== MIDDLEWARE SETUP =====
 # Security headers
 app.add_middleware(SecurityHeadersMiddleware)
 
 # Trusted hosts (optional)
 if TRUSTEDHOST_AVAILABLE and settings.ALLOWED_HOSTS != ["*"]:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.ALLOWED_HOSTS)
-elif not TRUSTEDHOST_AVAILABLE:
-    logger.warning("TrustedHostMiddleware not available - skipping")
 
 # CORS
 app.add_middleware(
@@ -328,17 +395,15 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
-    expose_headers=["X-ERIS-Version", "X-ERIS-Environment"]
+    expose_headers=["X-ERIS-Version", "X-ERIS-Environment", "X-ERIS-Features"]
 )
 
 # Rate limiting
 if SLOWAPI_AVAILABLE:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-else:
-    logger.warning("Rate limiting not available - slowapi not installed")
 
-# === REQUEST MIDDLEWARE ===
+# ===== REQUEST MIDDLEWARE =====
 @app.middleware("http")
 async def request_middleware(request: Request, call_next):
     """Request processing middleware"""
@@ -364,22 +429,23 @@ async def request_middleware(request: Request, call_next):
             content={"error": "Internal server error", "request_id": str(uuid.uuid4())}
         )
 
-# === GLOBAL STORAGE ===
+# ===== GLOBAL STORAGE =====
 active_orchestrators: Dict[str, Any] = {}
 simulation_cache: Dict[str, Dict] = {}
 
-# === PYDANTIC MODELS ===
+# ===== PYDANTIC MODELS =====
 class SimulationRequest(BaseModel):
     disaster_type: str
     location: str
     severity: int = Field(..., ge=1, le=10)
     duration: int = Field(72, ge=1, le=168)
+    use_government_data: bool = Field(True, description="Use real government data APIs")
     
     @validator('disaster_type')
     def validate_disaster_type(cls, v):
         valid_disasters = [
             "earthquake", "hurricane", "flood", "tsunami", "wildfire", 
-            "volcanic_eruption", "severe_storm", "epidemic", "pandemic", "landslide"
+            "volcanic_eruption", "severe_storm", "epidemic", "pandemic", "landslide", "tornado", "blizzard"
         ]
         if v not in valid_disasters:
             raise ValueError(f"Invalid disaster type. Must be one of: {valid_disasters}")
@@ -397,14 +463,9 @@ class SimulationResponse(BaseModel):
     message: str
     orchestrator_info: Dict[str, Any]
     data: Dict[str, Any]
+    government_data_enabled: bool = False
 
-class ErrorResponse(BaseModel):
-    error: str
-    message: str
-    request_id: str
-    timestamp: str
-
-# === WEBSOCKET MANAGER ===
+# ===== WEBSOCKET MANAGER =====
 class WebSocketManager:
     def __init__(self):
         self.connections: Dict[str, List[WebSocket]] = {}
@@ -596,6 +657,28 @@ class DynamicMetricsCalculator:
             "error": "Using fallback metrics"
         }
 
+# ===== UTILITY FUNCTIONS =====
+async def _check_firestore_health() -> bool:
+    """Check Firestore service health"""
+    try:
+        if hasattr(cloud, 'firestore'):
+            await cloud.firestore.get_active_simulations()
+            return True
+    except Exception as e:
+        logger.warning(f"Firestore health check failed: {e}")
+    return False
+
+async def _check_vertex_ai_health() -> bool:
+    """Check Vertex AI service health"""
+    try:
+        if hasattr(cloud, 'vertex_ai'):
+            test_context = {"type": "test", "location": "test", "severity": 1}
+            await cloud.vertex_ai.generate_official_statements(test_context, "test", "test", "test")
+            return True
+    except Exception as e:
+        logger.warning(f"Vertex AI health check failed: {e}")
+    return False
+
 # ===== CORE ENDPOINTS =====
 @app.get("/health")
 async def health_check(request: Request):
@@ -606,7 +689,8 @@ async def health_check(request: Request):
     service_health = {
         "firestore": await _check_firestore_health(),
         "vertex_ai": await _check_vertex_ai_health(),
-        "orchestrator": len(active_orchestrators) < settings.MAX_CONCURRENT_SIMULATIONS
+        "orchestrator": len(active_orchestrators) < settings.MAX_CONCURRENT_SIMULATIONS,
+        "government_apis": await _check_government_apis_health() if government_data_service else False
     }
     
     overall_status = "healthy"
@@ -655,6 +739,17 @@ async def _check_vertex_ai_health() -> bool:
         logger.warning(f"Vertex AI health check failed: {e}")
     return False
 
+async def _check_government_apis_health() -> bool:
+    """Check government APIs health"""
+    try:
+        if government_data_service:
+            # Quick health check of key government APIs
+            health_results = await government_data_service.check_apis_health()
+            return health_results.get("overall_healthy", False)
+    except Exception as e:
+        logger.warning(f"Government APIs health check failed: {e}")
+    return False
+
 @app.get("/system/info")
 async def get_system_info(request: Request):
     """Enhanced system information"""
@@ -676,16 +771,20 @@ async def get_system_info(request: Request):
             "concurrent_execution": True
         },
         "capabilities": {
-            "disaster_simulation": True,
-            "multi_agent_coordination": True,
-            "real_time_metrics": True,
-            "websocket_streaming": True,
-            "cloud_integration": True,
-            "production_ready": True,
-            "rate_limiting": True,
-            "authentication": settings.ENVIRONMENT == "production",
-            "monitoring": True,
-            "error_recovery": True
+        "disaster_simulation": True,
+        "multi_agent_coordination": True,
+        "real_time_metrics": True,
+        "websocket_streaming": True,
+        "cloud_integration": True,
+        "production_ready": True,
+        "rate_limiting": True,
+        "authentication": settings.ENVIRONMENT == "production",
+        "monitoring": True,
+        "error_recovery": True,
+        "government_data_integration": PRODUCTION_CONFIG_AVAILABLE,
+        "real_time_emergency_alerts": PRODUCTION_CONFIG_AVAILABLE,
+        "earthquake_monitoring": PRODUCTION_CONFIG_AVAILABLE,
+        "hospital_data_integration": PRODUCTION_CONFIG_AVAILABLE
         },
         "limits": {
             "max_concurrent_simulations": settings.MAX_CONCURRENT_SIMULATIONS,
@@ -797,7 +896,7 @@ async def start_simulation(
         
         # Start supporting services
         background_tasks.add_task(start_metrics_streaming, simulation_id)
-        background_tasks.add_task(start_content_generation, simulation_id)
+        background_tasks.add_task(start_government_data_monitoring, simulation_id)
         
         # Update health status
         health_status.active_simulations = len(active_orchestrators)
@@ -1127,6 +1226,142 @@ async def get_live_feed(request: Request, simulation_id: str, limit: int = 20):
         logger.error(f"Live feed error for {simulation_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# ===== GOVERNMENT DATA ENDPOINTS =====
+
+@app.get("/government/health")
+async def get_government_apis_health(request: Request):
+    """Check health status of all government APIs"""
+    if not government_data_service:
+        return {
+            "status": "unavailable",
+            "message": "Government data service not initialized",
+            "apis": {},
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    
+    try:
+        health_results = await government_data_service.check_apis_health()
+        return {
+            "status": "healthy" if health_results.get("overall_healthy") else "degraded",
+            "apis": health_results.get("api_status", {}),
+            "response_times": health_results.get("response_times", {}),
+            "last_check": datetime.utcnow().isoformat(),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Government APIs health check failed: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+@app.get("/government/alerts")
+async def get_emergency_alerts(request: Request, state: str = None, limit: int = 10):
+    """Get current emergency alerts from FEMA and NWS"""
+    if not government_data_service:
+        raise HTTPException(status_code=503, detail="Government data service unavailable")
+    
+    try:
+        alerts = await government_data_service.get_emergency_alerts(state=state, limit=limit)
+        return {
+            "alerts": alerts,
+            "total_count": len(alerts),
+            "state_filter": state,
+            "timestamp": datetime.utcnow().isoformat(),
+            "sources": ["FEMA", "National Weather Service"]
+        }
+    except Exception as e:
+        logger.error(f"Failed to get emergency alerts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/government/earthquakes")
+async def get_earthquake_data(request: Request, magnitude: float = 2.5, limit: int = 20):
+    """Get recent earthquake data from USGS"""
+    if not government_data_service:
+        raise HTTPException(status_code=503, detail="Government data service unavailable")
+    
+    try:
+        earthquakes = await government_data_service.get_earthquake_data(
+            min_magnitude=magnitude, 
+            limit=limit
+        )
+        return {
+            "earthquakes": earthquakes,
+            "total_count": len(earthquakes),
+            "magnitude_filter": magnitude,
+            "timestamp": datetime.utcnow().isoformat(),
+            "source": "USGS Earthquake Hazards Program"
+        }
+    except Exception as e:
+        logger.error(f"Failed to get earthquake data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/government/hospitals")
+async def get_hospital_data(request: Request, state: str, limit: int = 50):
+    """Get hospital data by state from CMS"""
+    if not government_data_service:
+        raise HTTPException(status_code=503, detail="Government data service unavailable")
+    
+    try:
+        hospitals = await government_data_service.get_hospital_data(state=state, limit=limit)
+        return {
+            "hospitals": hospitals,
+            "total_count": len(hospitals),
+            "state": state,
+            "timestamp": datetime.utcnow().isoformat(),
+            "source": "Centers for Medicare & Medicaid Services"
+        }
+    except Exception as e:
+        logger.error(f"Failed to get hospital data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/government/data/{simulation_id}")
+async def get_government_data_for_simulation(request: Request, simulation_id: str):
+    """Get relevant government data for a specific simulation"""
+    # Check if simulation exists
+    if simulation_id not in simulation_cache and simulation_id not in active_orchestrators:
+        try:
+            simulation_data = await cloud.firestore.get_simulation_state(simulation_id)
+            if not simulation_data:
+                raise HTTPException(status_code=404, detail="Simulation not found")
+            simulation_cache[simulation_id] = simulation_data
+        except Exception:
+            raise HTTPException(status_code=404, detail="Simulation not found")
+    
+    if not government_data_service:
+        return {
+            "simulation_id": simulation_id,
+            "government_data_available": False,
+            "message": "Government data service not available",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    
+    try:
+        simulation_data = simulation_cache.get(simulation_id, {})
+        location = simulation_data.get("location", "")
+        disaster_type = simulation_data.get("disaster_type", "")
+        
+        # Get relevant data based on simulation context
+        relevant_data = await government_data_service.get_simulation_context_data(
+            location=location,
+            disaster_type=disaster_type
+        )
+        
+        return {
+            "simulation_id": simulation_id,
+            "government_data_available": True,
+            "location": location,
+            "disaster_type": disaster_type,
+            "data": relevant_data,
+            "timestamp": datetime.utcnow().isoformat(),
+            "sources": ["FEMA", "USGS", "NWS", "CMS"]
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get government data for simulation {simulation_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ===== WEBSOCKET ENDPOINT =====
 @app.websocket("/ws/metrics/{simulation_id}")
 async def websocket_metrics(websocket: WebSocket, simulation_id: str):
@@ -1143,10 +1378,11 @@ async def websocket_metrics(websocket: WebSocket, simulation_id: str):
             "simulation_id": simulation_id,
             "dashboard_metrics": initial_metrics,
             "orchestrator_info": {
-                "ai_model": "Gemini 2.0 Flash",
-                "version": "0.5.0",
-                "real_time_enabled": True,
-                "total_agents": 10
+            "ai_model": "Gemini 2.0 Flash",
+            "version": "0.5.0",
+            "real_time_enabled": True,
+            "total_agents": 10,
+            "government_data_enabled": government_data_service is not None
             },
             "timestamp": datetime.utcnow().isoformat(),
             "connection_id": id(websocket)
@@ -1231,13 +1467,27 @@ async def start_metrics_streaming(simulation_id: str):
                 metrics = metrics_calculator.calculate_real_time_metrics()
                 
                 # Broadcast via WebSocket
-                await websocket_manager.broadcast_to_simulation(simulation_id, {
+                broadcast_data = {
                     "type": "metrics_update",
                     "simulation_id": simulation_id,
                     "dashboard_metrics": metrics,
                     "timestamp": datetime.utcnow().isoformat()
-                })
-                
+                }
+
+                # Add government data if available
+                if government_data_service and simulation_id in simulation_cache:
+                    try:
+                        sim_data = simulation_cache[simulation_id]
+                        gov_data = await government_data_service.get_quick_updates(
+                            location=sim_data.get("location", ""),
+                            disaster_type=sim_data.get("disaster_type", "")
+                        )
+                        broadcast_data["government_updates"] = gov_data
+                    except Exception as e:
+                        logger.warning(f"Failed to get government updates: {e}")
+
+                await websocket_manager.broadcast_to_simulation(simulation_id, broadcast_data)
+
                 # Update cache
                 if simulation_id in simulation_cache:
                     simulation_cache[simulation_id]["last_metrics"] = metrics
@@ -1262,48 +1512,74 @@ async def start_metrics_streaming(simulation_id: str):
     except Exception as e:
         logger.error(f"Metrics streaming initialization failed: {e}")
 
-async def start_content_generation(simulation_id: str):
-    """Background task for AI content generation"""
+async def start_government_data_monitoring(simulation_id: str):
+    """Background task for real government data monitoring and updates"""
     try:
         await asyncio.sleep(10)  # Wait for initialization
         
+        if not government_data_service:
+            logger.warning(f"Government data service not available for simulation {simulation_id}")
+            return
+        
         while simulation_id in active_orchestrators or simulation_id in simulation_cache:
             try:
-                # Generate social media content
-                if hasattr(cloud, 'vertex_ai'):
-                    simulation_data = simulation_cache.get(simulation_id, {})
-                    disaster_context = {
-                        "type": simulation_data.get("disaster_type", "emergency"),
-                        "location": simulation_data.get("location", "affected area"),
-                        "severity": simulation_data.get("severity", 5)
-                    }
-                    
-                    # Generate new posts
-                    new_posts = await cloud.vertex_ai.generate_social_media_posts(
-                        disaster_context, "response", num_posts=2, platform="twitter"
-                    )
-                    
-                    if new_posts:
-                        # Broadcast new content
-                        await websocket_manager.broadcast_to_simulation(simulation_id, {
-                            "type": "social_media_update",
-                            "simulation_id": simulation_id,
-                            "new_posts": new_posts,
-                            "timestamp": datetime.utcnow().isoformat()
-                        })
+                simulation_data = simulation_cache.get(simulation_id, {})
+                location = simulation_data.get("location", "")
+                disaster_type = simulation_data.get("disaster_type", "")
                 
-                # Generate at random intervals
-                import random
-                await asyncio.sleep(random.randint(30, 90))
+                # Get real government updates
+                updates = {}
+                
+                # Get emergency alerts from FEMA/NWS
+                try:
+                    state = location.split(",")[-1].strip() if "," in location else None
+                    alerts = await government_data_service.get_emergency_alerts(state=state, limit=5)
+                    if alerts:
+                        updates["emergency_alerts"] = alerts
+                except Exception as e:
+                    logger.warning(f"Failed to get emergency alerts: {e}")
+                
+                # Get earthquake data if relevant
+                if disaster_type in ["earthquake", "tsunami"]:
+                    try:
+                        earthquakes = await government_data_service.get_earthquake_data(min_magnitude=2.0, limit=10)
+                        if earthquakes:
+                            updates["earthquake_data"] = earthquakes
+                    except Exception as e:
+                        logger.warning(f"Failed to get earthquake data: {e}")
+                
+                # Get hospital data for the area
+                if state:
+                    try:
+                        hospitals = await government_data_service.get_hospital_data(state=state, limit=20)
+                        if hospitals:
+                            updates["hospital_data"] = hospitals
+                    except Exception as e:
+                        logger.warning(f"Failed to get hospital data: {e}")
+                
+                # Broadcast real government updates
+                if updates:
+                    await websocket_manager.broadcast_to_simulation(simulation_id, {
+                        "type": "government_data_update",
+                        "simulation_id": simulation_id,
+                        "updates": updates,
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "source": "real_government_apis"
+                    })
+                    
+                    logger.info(f"Broadcasted real government data updates for simulation {simulation_id}")
+                
+                # Check for updates every 2 minutes (government data doesn't change as frequently)
+                await asyncio.sleep(120)
                 
             except Exception as e:
-                logger.error(f"Content generation error for {simulation_id}: {e}")
-                await asyncio.sleep(60)
+                logger.error(f"Government data monitoring error for {simulation_id}: {e}")
+                await asyncio.sleep(300)  # Wait 5 minutes on error
         
-        logger.info(f"Content generation completed for simulation {simulation_id}")
+        logger.info(f"Government data monitoring completed for simulation {simulation_id}")
         
     except Exception as e:
-        logger.error(f"Content generation initialization failed: {e}")
+        logger.error(f"Government data monitoring initialization failed: {e}")
 
 async def run_orchestrated_simulation(orchestrator: Any, simulation_id: str):
     """Background task for running orchestrated simulation"""
@@ -1416,13 +1692,22 @@ async def admin_list_simulations(authenticated: bool = Depends(verify_api_key)):
     # Add active simulations
     for sim_id, orchestrator in active_orchestrators.items():
         sim_data = simulation_cache.get(sim_id, {})
+        try:
+            status_info = orchestrator.get_simulation_status() if hasattr(orchestrator, 'get_simulation_status') else {}
+        except Exception:
+            status_info = {}
+            
         simulations.append({
             "simulation_id": sim_id,
             "status": "active",
+            "orchestrator_active": True,
             "created_at": sim_data.get("created_at"),
             "disaster_type": sim_data.get("disaster_type"),
             "location": sim_data.get("location"),
-            "websocket_connections": len(websocket_manager.connections.get(sim_id, []))
+            "websocket_connections": len(websocket_manager.connections.get(sim_id, [])),
+            "current_phase": status_info.get("current_phase", "unknown"),
+            "government_data_enabled": government_data_service is not None,
+            "use_government_data": sim_data.get("use_government_data", False)
         })
     
     # Add cached simulations
@@ -1431,16 +1716,23 @@ async def admin_list_simulations(authenticated: bool = Depends(verify_api_key)):
             simulations.append({
                 "simulation_id": sim_id,
                 "status": sim_data.get("status", "unknown"),
+                "orchestrator_active": False,
                 "created_at": sim_data.get("created_at"),
                 "disaster_type": sim_data.get("disaster_type"),
                 "location": sim_data.get("location"),
-                "websocket_connections": 0
+                "websocket_connections": 0,
+                "completed_at": sim_data.get("completed_at"),
+                "error": sim_data.get("error"),
+                "government_data_enabled": government_data_service is not None,
+                "use_government_data": sim_data.get("use_government_data", False)
             })
     
     return {
         "simulations": simulations,
         "total_count": len(simulations),
         "active_count": len(active_orchestrators),
+        "cached_count": len(simulation_cache),
+        "government_data_available": government_data_service is not None,
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -1450,7 +1742,8 @@ async def admin_cleanup(authenticated: bool = Depends(verify_api_key)):
     cleanup_results = {
         "stopped_simulations": 0,
         "cleaned_websockets": 0,
-        "cleared_cache_entries": 0
+        "cleared_cache_entries": 0,
+        "government_data_cleanup": False
     }
     
     # Stop all simulations
@@ -1480,9 +1773,19 @@ async def admin_cleanup(authenticated: bool = Depends(verify_api_key)):
         del simulation_cache[sim_id]
         cleanup_results["cleared_cache_entries"] += 1
     
+    # Clean up government data service if available
+    if government_data_service:
+        try:
+            if hasattr(government_data_service, 'cleanup_cache'):
+                await government_data_service.cleanup_cache()
+            cleanup_results["government_data_cleanup"] = True
+        except Exception as e:
+            logger.warning(f"Government data cleanup failed: {e}")
+    
     return {
         "message": "System cleanup completed",
         "results": cleanup_results,
+        "government_data_service_available": government_data_service is not None,
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -1490,12 +1793,28 @@ async def admin_cleanup(authenticated: bool = Depends(verify_api_key)):
 @app.get("/metrics")
 async def get_system_metrics():
     """Get detailed system metrics for monitoring"""
+    # Calculate government data metrics
+    government_data_simulations = 0
+    if government_data_service:
+        government_data_simulations = len([
+            s for s in simulation_cache.values() 
+            if s.get("use_government_data", False)
+        ])
+    
     return {
         "system_health": health_status.get_health_metrics(),
+        "government_apis": {
+            "service_available": government_data_service is not None,
+            "service_initialized": PRODUCTION_CONFIG_AVAILABLE,
+            "last_health_check": datetime.utcnow().isoformat() if government_data_service else None,
+            "apis_monitored": ["FEMA", "USGS", "NWS", "CMS"] if government_data_service else [],
+            "simulations_using_gov_data": government_data_simulations
+        },
         "simulations": {
             "active_count": len(active_orchestrators),
             "total_cached": len(simulation_cache),
-            "max_concurrent": settings.MAX_CONCURRENT_SIMULATIONS
+            "max_concurrent": settings.MAX_CONCURRENT_SIMULATIONS,
+            "government_data_simulations": government_data_simulations
         },
         "websockets": {
             "total_connections": health_status.websocket_connections,
@@ -1511,7 +1830,15 @@ async def get_system_metrics():
         "configuration": {
             "environment": settings.ENVIRONMENT,
             "rate_limit": f"{settings.RATE_LIMIT_REQUESTS}/{settings.RATE_LIMIT_WINDOW}s",
-            "websocket_heartbeat": f"{settings.WEBSOCKET_HEARTBEAT_INTERVAL}s"
+            "websocket_heartbeat": f"{settings.WEBSOCKET_HEARTBEAT_INTERVAL}s",
+            "production_config_loaded": PRODUCTION_CONFIG_AVAILABLE,
+            "government_data_integration": government_data_service is not None
+        },
+        "features": {
+            "real_time_metrics": True,
+            "websocket_streaming": True,
+            "government_data_integration": government_data_service is not None,
+            "production_ready": settings.ENVIRONMENT == "production"
         },
         "timestamp": datetime.utcnow().isoformat()
     }
@@ -1522,6 +1849,19 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     """Enhanced HTTP exception handler"""
     request_id = str(uuid.uuid4())
     
+    # Add context for government data related errors
+    error_context = {
+        "government_data_available": government_data_service is not None,
+        "production_config_loaded": PRODUCTION_CONFIG_AVAILABLE
+    }
+    
+    # Check if this is a government data related endpoint
+    if "/government/" in str(request.url.path):
+        error_context.update({
+            "error_type": "government_data_error",
+            "service_status": "available" if government_data_service else "unavailable"
+        })
+    
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -1529,7 +1869,8 @@ async def http_exception_handler(request: Request, exc: HTTPException):
             "status_code": exc.status_code,
             "request_id": request_id,
             "timestamp": datetime.utcnow().isoformat(),
-            "path": str(request.url.path)
+            "path": str(request.url.path),
+            "context": error_context
         }
     )
 
@@ -1540,6 +1881,22 @@ async def general_exception_handler(request: Request, exc: Exception):
     
     logger.error(f"Unhandled exception {request_id}: {exc}", exc_info=True)
     
+    # Enhanced error context for debugging
+    error_context = {
+        "government_data_available": government_data_service is not None,
+        "production_config_loaded": PRODUCTION_CONFIG_AVAILABLE,
+        "active_simulations": len(active_orchestrators),
+        "environment": settings.ENVIRONMENT
+    }
+    
+    # Check if error might be government data related
+    error_str = str(exc).lower()
+    if any(keyword in error_str for keyword in ["government", "fema", "usgs", "nws", "cms"]):
+        error_context.update({
+            "potential_government_data_error": True,
+            "suggestion": "Check government data service configuration and API connectivity"
+        })
+    
     return JSONResponse(
         status_code=500,
         content={
@@ -1547,13 +1904,14 @@ async def general_exception_handler(request: Request, exc: Exception):
             "message": "An unexpected error occurred",
             "request_id": request_id,
             "timestamp": datetime.utcnow().isoformat(),
-            "path": str(request.url.path)
+            "path": str(request.url.path),
+            "context": error_context
         }
     )
 
 # ===== PERIODIC CLEANUP TASK =====
 async def periodic_cleanup():
-    """Periodic cleanup task"""
+    """Periodic cleanup task with government data maintenance"""
     while True:
         try:
             await asyncio.sleep(300)  # Run every 5 minutes
@@ -1580,6 +1938,22 @@ async def periodic_cleanup():
                 del simulation_cache[sim_id]
                 logger.info(f"Cleaned up old simulation cache: {sim_id}")
             
+            # Government data service maintenance
+            if government_data_service:
+                try:
+                    # Clean up government data cache if method exists
+                    if hasattr(government_data_service, 'cleanup_cache'):
+                        await government_data_service.cleanup_cache()
+                        logger.debug("Government data cache cleanup completed")
+                    
+                    # Refresh API health status
+                    if hasattr(government_data_service, 'refresh_api_status'):
+                        await government_data_service.refresh_api_status()
+                        logger.debug("Government API status refreshed")
+                        
+                except Exception as e:
+                    logger.warning(f"Government data service maintenance failed: {e}")
+            
             logger.debug(f"Periodic cleanup completed. Removed {len(old_simulations)} old simulations")
             
         except Exception as e:
@@ -1591,6 +1965,12 @@ async def startup_event():
     """Additional startup tasks"""
     asyncio.create_task(periodic_cleanup())
     logger.info("Periodic cleanup task started")
+    
+    # Log government data service status at startup
+    if government_data_service:
+        logger.info("✅ Government data service available for periodic maintenance")
+    else:
+        logger.info("⚠️ Government data service not available - skipping gov data maintenance")
 
 # ===== DEVELOPMENT/TESTING ENDPOINTS =====
 if settings.DEBUG:
@@ -1602,17 +1982,55 @@ if settings.DEBUG:
                 sim_id: {
                     "status": data.get("status"),
                     "created_at": data.get("created_at"),
-                    "disaster_type": data.get("disaster_type")
+                    "disaster_type": data.get("disaster_type"),
+                    "use_government_data": data.get("use_government_data", False),
+                    "location": data.get("location")
                 } for sim_id, data in simulation_cache.items()
             },
             "active_orchestrators": list(active_orchestrators.keys()),
             "websocket_connections": {
                 sim_id: len(conns) for sim_id, conns in websocket_manager.connections.items()
+            },
+            "government_data": {
+                "service_available": government_data_service is not None,
+                "production_config_loaded": PRODUCTION_CONFIG_AVAILABLE,
+                "simulations_using_gov_data": len([
+                    s for s in simulation_cache.values() 
+                    if s.get("use_government_data", False)
+                ])
             }
         }
     
+    @app.get("/debug/government-data")
+    async def debug_government_data():
+        """Debug endpoint for government data service status"""
+        if not government_data_service:
+            return {
+                "error": "Government data service not available",
+                "production_config_loaded": PRODUCTION_CONFIG_AVAILABLE,
+                "environment": settings.ENVIRONMENT
+            }
+        
+        try:
+            # Test API connectivity
+            health_check = await government_data_service.check_apis_health()
+            return {
+                "service_available": True,
+                "api_health": health_check,
+                "production_config_loaded": PRODUCTION_CONFIG_AVAILABLE,
+                "environment": settings.ENVIRONMENT,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        except Exception as e:
+            return {
+                "service_available": True,
+                "error": str(e),
+                "message": "Government data service available but health check failed",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+    
     @app.post("/debug/simulate-load")
-    async def debug_simulate_load(num_simulations: int = 3):
+    async def debug_simulate_load(num_simulations: int = 3, use_government_data: bool = True):
         """Debug endpoint to create multiple test simulations"""
         created_simulations = []
         
@@ -1621,7 +2039,8 @@ if settings.DEBUG:
                 disaster_type="flood",
                 location=f"Test Location {i+1}",
                 severity=5,
-                duration=24
+                duration=24,
+                use_government_data=use_government_data
             )
             
             try:
@@ -1638,7 +2057,9 @@ if settings.DEBUG:
         return {
             "created_simulations": created_simulations,
             "total_created": len(created_simulations),
-            "active_simulations": len(active_orchestrators)
+            "active_simulations": len(active_orchestrators),
+            "government_data_enabled": use_government_data,
+            "government_service_available": government_data_service is not None
         }
 
 # === ORCHESTRATOR ENDPOINTS ===
@@ -1668,7 +2089,9 @@ async def get_orchestrator_status(simulation_id: str):
                 "simulation_status": simulation_data.get("status", "unknown"),
                 "error": "Orchestrator not running for this simulation",
                 "fallback_mode": True,
-                "message": "Simulation exists but orchestrator is not active. Basic simulation mode."
+                "message": "Simulation exists but orchestrator is not active. Basic simulation mode.",
+                "government_data_enabled": simulation_data.get("use_government_data", False),
+                "government_service_available": government_data_service is not None
             }
         else:
             raise HTTPException(status_code=404, detail="Simulation not found")
@@ -1678,6 +2101,9 @@ async def get_orchestrator_status(simulation_id: str):
         agent_info = orchestrator.get_all_agent_info()
         performance = orchestrator.get_performance_report()
         
+        # Get simulation data for government data status
+        sim_data = simulation_cache.get(simulation_id, {})
+        
         return {
             "simulation_id": simulation_id,
             "orchestrator_active": True,
@@ -1686,17 +2112,22 @@ async def get_orchestrator_status(simulation_id: str):
             "performance": performance,
             "fallback_mode": False,
             "real_time_metrics": orchestrator.get_real_time_metrics(),
+            "government_data_enabled": sim_data.get("use_government_data", False),
+            "government_service_available": government_data_service is not None,
             "timestamp": datetime.utcnow().isoformat()
         }
         
     except Exception as e:
         logger.error(f"Error getting orchestrator status: {e}")
+        sim_data = simulation_cache.get(simulation_id, {})
         return {
             "simulation_id": simulation_id,
             "orchestrator_active": True,
             "error": str(e),
             "fallback_mode": True,
-            "message": "Orchestrator active but status retrieval failed"
+            "message": "Orchestrator active but status retrieval failed",
+            "government_data_enabled": sim_data.get("use_government_data", False),
+            "government_service_available": government_data_service is not None
         }
 
 @app.get("/orchestrator/{simulation_id}/metrics")
@@ -1726,16 +2157,22 @@ async def get_orchestrator_metrics(simulation_id: str):
             "metrics_history": [],
             "fallback_mode": True,
             "message": "Using fallback metrics - orchestrator not active",
+            "government_data_enabled": simulation_data.get("use_government_data", False),
+            "government_service_available": government_data_service is not None,
             "timestamp": datetime.utcnow().isoformat()
         }
     
     try:
+        sim_data = simulation_cache.get(simulation_id, {})
+        
         return {
             "simulation_id": simulation_id,
             "orchestrator_active": True,
             "real_time_metrics": orchestrator.get_real_time_metrics(),
             "metrics_history": orchestrator.get_metrics_history(limit=50),
             "fallback_mode": False,
+            "government_data_enabled": sim_data.get("use_government_data", False),
+            "government_service_available": government_data_service is not None,
             "timestamp": datetime.utcnow().isoformat()
         }
         
@@ -1763,7 +2200,8 @@ async def list_all_simulations():
             "disaster_type": sim_data.get("disaster_type"),
             "location": sim_data.get("location"),
             "websocket_connections": len(websocket_manager.connections.get(sim_id, [])),
-            "current_phase": status_info.get("current_phase", "unknown")
+            "current_phase": status_info.get("current_phase", "unknown"),
+            "government_data_enabled": sim_data.get("use_government_data", False)
         })
     
     for sim_id, sim_data in simulation_cache.items():
@@ -1777,7 +2215,8 @@ async def list_all_simulations():
                 "location": sim_data.get("location"),
                 "websocket_connections": 0,
                 "completed_at": sim_data.get("completed_at"),
-                "error": sim_data.get("error")
+                "error": sim_data.get("error"),
+                "government_data_enabled": sim_data.get("use_government_data", False)
             })
     
     return {
@@ -1785,6 +2224,10 @@ async def list_all_simulations():
         "total_count": len(simulations),
         "active_count": len(active_orchestrators),
         "cached_count": len(simulation_cache),
+        "government_service_available": government_data_service is not None,
+        "government_data_simulations": len([
+            s for s in simulations if s.get("government_data_enabled", False)
+        ]),
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -1801,7 +2244,9 @@ async def ping(request: Request):
         "agents": 10,
         "server_ready": True,
         "active_simulations": len(active_orchestrators),
-        "websocket_connections": health_status.websocket_connections
+        "websocket_connections": health_status.websocket_connections,
+        "government_data_available": government_data_service is not None,
+        "production_config_loaded": PRODUCTION_CONFIG_AVAILABLE
     }
 
 @app.get("/")
@@ -1822,11 +2267,20 @@ async def root():
         "features": {
             "real_time_metrics": True,
             "websocket_streaming": True,
-            "ai_content_generation": True,
+            "government_data_integration": government_data_service is not None,
+            "real_time_emergency_alerts": government_data_service is not None,
+            "earthquake_monitoring": government_data_service is not None,
+            "hospital_data_integration": government_data_service is not None,
             "production_ready": True,
             "rate_limiting": True,
             "authentication": settings.ENVIRONMENT == "production",
             "monitoring": True
+        },
+        "government_apis": {
+            "fema_integration": government_data_service is not None,
+            "usgs_earthquake_data": government_data_service is not None,
+            "nws_weather_alerts": government_data_service is not None,
+            "cms_hospital_data": government_data_service is not None
         },
         "endpoints": {
             "health": "/health",
@@ -1834,7 +2288,11 @@ async def root():
             "start_simulation": "/simulate",
             "websocket_metrics": "/ws/metrics/{simulation_id}",
             "dashboard_metrics": "/metrics/dashboard/{simulation_id}",
-            "live_feed": "/live-feed/{simulation_id}"
+            "live_feed": "/live-feed/{simulation_id}",
+            "government_health": "/government/health",
+            "emergency_alerts": "/government/alerts",
+            "earthquake_data": "/government/earthquakes",
+            "hospital_data": "/government/hospitals"
         },
         "limits": {
             "max_concurrent_simulations": settings.MAX_CONCURRENT_SIMULATIONS,
@@ -1843,7 +2301,17 @@ async def root():
         "current_load": {
             "active_simulations": len(active_orchestrators),
             "websocket_connections": health_status.websocket_connections,
-            "uptime_seconds": int((datetime.utcnow() - health_status.startup_time).total_seconds())
+            "uptime_seconds": int((datetime.utcnow() - health_status.startup_time).total_seconds()),
+            "government_data_simulations": len([
+                s for s in simulation_cache.values() 
+                if s.get("use_government_data", False)
+            ])
+        },
+        "data_sources": {
+            "simulation_metrics": "Real-time AI orchestrator",
+            "emergency_alerts": "FEMA & National Weather Service" if government_data_service else "Not available",
+            "earthquake_data": "USGS Earthquake Hazards Program" if government_data_service else "Not available",
+            "hospital_data": "Centers for Medicare & Medicaid Services" if government_data_service else "Not available"
         }
     }
 
@@ -1868,6 +2336,18 @@ async def shutdown_event():
             except:
                 pass
     
+    # Graceful government data service shutdown
+    if government_data_service:
+        try:
+            logger.info("🔄 Shutting down government data service...")
+            if hasattr(government_data_service, 'session') and government_data_service.session:
+                await government_data_service.session.close()
+            if hasattr(government_data_service, 'cleanup'):
+                await government_data_service.cleanup()
+            logger.info("✅ Government data service shutdown completed")
+        except Exception as e:
+            logger.error(f"Error during government data service shutdown: {e}")
+    
     logger.info("✅ Graceful shutdown completed")
 
 # ===== APPLICATION CONFIGURATION =====
@@ -1886,31 +2366,17 @@ def configure_logging():
     # Reduce noise from third-party libraries
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("fastapi").setLevel(logging.WARNING)
+    
+    # Set appropriate logging levels for government data APIs
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # Reduce HTTP client noise
+    logging.getLogger("urllib3").setLevel(logging.WARNING)  # Reduce connection pool noise
 
 # Initialize logging
 configure_logging()
 
 if __name__ == "__main__":
-    # Production vs Development configuration
-    if settings.ENVIRONMENT == "production":
-        # Production settings
-        uvicorn.run(
-            "main:app",
-            host="0.0.0.0",
-            port=int(os.getenv("PORT", 8000)),
-            workers=int(os.getenv("WORKERS", 1)),
-            log_level="info",
-            access_log=False,  # Use our custom logging
-            server_header=False,
-            date_header=False
-        )
-    else:
-        # Development settings
-        uvicorn.run(
-            "main:app",
-            host="127.0.0.1",
-            port=8000,
-            reload=True,
-            log_level="debug",
-            access_log=True
-        )
+    # Log startup information
+    logger.info("Starting ERIS Emergency Response Intelligence System")
+    logger.info(f"Environment: {settings.ENVIRONMENT}")
+    logger.info(f"Government Data Integration: {'✅ Enabled' if government_data_service else '⚠️ Disabled'}")
+    logger.info(f"Production Config: {'✅ Loaded' if PRODUCTION_CONFIG_AVAILABLE else '⚠️ Not loaded'}")
